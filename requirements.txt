@@ -1,0 +1,8 @@
+streamlit
+openai-whisper
+edge-tts
+srt
+pandas
+pydub
+deep_translator
+audiostretchy
