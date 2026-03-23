@@ -1,4 +1,3 @@
-# --- កូដសម្រាប់បន្លំ System ឱ្យស្គាល់ audioop ក្នុង Python 3.14 ---
 try:
     import audioop
 except ImportError:
@@ -12,19 +11,14 @@ import datetime
 import asyncio, edge_tts, srt, os, re, pandas as pd
 from pydub import AudioSegment
 from deep_translator import GoogleTranslator
-from audiostretchy.stretch import stretch_audio
 
 # --- ១. កំណត់ Page Config ---
 st.set_page_config(page_title="Reach AI Pro", layout="wide")
 
-# បន្ថែម CSS ដើម្បីឱ្យប៊ូតុងធំៗស្រួលចុចលើទូរស័ព្ទ
 st.markdown("""
     <style>
     .stButton>button { width: 100%; border-radius: 8px; height: 3em; }
     .stDownloadButton>button { width: 100%; border-radius: 8px; }
-    @media (max-width: 600px) {
-        .main .block-container { padding: 10px; }
-    }
     </style>
     """, unsafe_allow_html=True)
 
@@ -51,12 +45,11 @@ def login():
 
 login()
 
-# --- ៣. Helper Functions ---
+# --- ៣. Helper Functions (សំខាន់សម្រាប់ Sync) ---
 def format_time(seconds):
     td = datetime.timedelta(seconds=seconds)
     total_sec = int(td.total_seconds())
     milis = int((td.total_seconds() - total_sec) * 1000)
-    # បង្ខំឱ្យចេញទម្រង់ 00:00:00,000
     return f"{total_sec // 3600:02}:{(total_sec % 3600) // 60:02}:{total_sec % 60:02},{milis:03}"
 
 def localize_khmer(text):
@@ -65,58 +58,45 @@ def localize_khmer(text):
     for p, r in slang_map.items(): text = re.sub(p, r, text)
     return text.strip()
 
-async def process_audio(data, speed, status, progress):
+async def process_audio(data, base_speed, status, progress):
     combined = AudioSegment.silent(duration=0)
     current_ms = 0
     
     for i, row in enumerate(data):
         progress.progress((i + 1) / len(data))
-        status.write(f"🎙️ កំពុងផលិតឃ្លាទី {i+1}...")
+        status.write(f"🎙️ ផលិតឃ្លាទី {i+1}...")
         
         text = str(row['Khmer_Text']).strip()
         start_ms = row['Start'].total_seconds() * 1000
         end_ms = row['End'].total_seconds() * 1000
-        duration_srt = end_ms - start_ms # រយៈពេលកំណត់ក្នុង Subtitle
+        duration_srt = end_ms - start_ms 
         
-        # ១. បន្ថែមចន្លោះស្ងាត់ (Silence) ឱ្យត្រូវតាមនាទីចាប់ផ្ដើម
+        # ១. បញ្ចូលភាពស្ងាត់មុនឃ្លានីមួយៗ ដើម្បីឱ្យ Sync តាមម៉ោង
         if start_ms > current_ms:
             combined += AudioSegment.silent(duration=start_ms - current_ms)
             current_ms = start_ms
 
-        # ២. ផលិតសម្លេងពី AI
-        v = "km-KH-SreymomNeural" if row['Voice'] == "Female" else "km-KH-PisethNeural"
-        tmp = f"t_{i}.mp3"
-        await edge_tts.Communicate(text, v, rate=f"{speed+20:+}%").save(tmp)
+        # ២. កំណត់សម្លេង (ស្រី/ប្រុស)
+        voice = "km-KH-SreymomNeural" if row['Voice'] == "Female" else "km-KH-PisethNeural"
+        tmp_file = f"temp_{i}.mp3"
         
-        if os.path.exists(tmp):
-            seg = AudioSegment.from_file(tmp)
-            duration_voice = len(seg)
+        # ប្រើល្បឿនមូលដ្ឋានដែលអ្នកប្រើកំណត់
+        await edge_tts.Communicate(text, voice, rate=f"{base_speed:+}%").save(tmp_file)
+        
+        if os.path.exists(tmp_file):
+            seg = AudioSegment.from_file(tmp_file)
             
-            # ៣. ការគណនាល្បឿនអូតូ (Auto Stretching)
-            # យើងមិនប្រើការកាត់កន្ទុយចោលទេ ប៉ុន្តែយើងមួលល្បឿនឱ្យវាចប់ទាន់ពេល
-            wav = f"t_{i}.wav"
-            seg.export(wav, format="wav")
+            # ៣. ពិនិត្យមើលថាបើអានលើសម៉ោង SRT យើងនឹងមួលឱ្យលឿន (Speed Up)
+            if len(seg) > duration_srt and duration_srt > 0:
+                speed_factor = len(seg) / duration_srt
+                # កំណត់ល្បឿនអតិបរមា ២ដង ដើម្បីកុំឱ្យបែកសម្លេង
+                if speed_factor > 1.0:
+                    seg = seg.speed_up(playback_speed=min(speed_factor, 2.0))
             
-            # បើសម្លេង AI វែងជាងនាទី Subtitle លើសពី 50ms
-            if duration_voice > duration_srt + 50:
-                # គណនាថាត្រូវលឿនប៉ុន្មានដង ដើម្បីឱ្យនិយាយចប់ទាន់នាទីបញ្ចប់
-                # រូបមន្ត៖ រយៈពេលសម្លេង AI / រយៈពេល Subtitle
-                ratio = duration_voice / duration_srt
-                
-                # បង្កើនល្បឿនឱ្យត្រូវនឹង Ratio (អតិបរមា 2.0x ដើម្បីកុំឱ្យលឿនពេកស្ដាប់មិនយល់)
-                final_ratio = min(ratio, 2.0) 
-                stretch_audio(wav, f"s_{i}.wav", final_ratio)
-                seg = AudioSegment.from_file(f"s_{i}.wav")
-                
-                if os.path.exists(f"s_{i}.wav"): os.remove(f"s_{i}.wav")
-            
-            # បន្ថែមសម្លេងចូលទៅក្នុង File រួម
+            # ៤. បន្ថែមសម្លេងចូល
             combined += seg
             current_ms += len(seg)
-            
-            # លុប File បណ្ដោះអាសន្ន
-            if os.path.exists(wav): os.remove(wav)
-            if os.path.exists(tmp): os.remove(tmp)
+            os.remove(tmp_file)
             
     return combined
 
@@ -137,34 +117,30 @@ if menu == "បំប្លែងវីដេអូ (Transcribe)":
     with c1:
         if st.button("🚀 ចាប់ផ្ដើមបំប្លែង", type="primary"):
             if video_file:
-                with st.spinner("កំពុងស្តាប់ និងសរសេរ..."):
+                with st.spinner("កំពុងស្តាប់..."):
                     with open("temp.mp4", "wb") as f: f.write(video_file.getbuffer())
                     model = whisper.load_model("base")
                     res = model.transcribe("temp.mp4")
                     srt_out = ""
                     for i, s in enumerate(res['segments']):
+                        # បង្ខំឱ្យប្រើ format_time ថ្មីដើម្បីកុំឱ្យខុសនាទី
                         srt_out += f"{i+1}\n{format_time(s['start'])} --> {format_time(s['end'])}\n{s['text'].strip()}\n\n"
                     st.session_state.generated_srt = srt_out
-                    st.success("រួចរាល់! ទិន្នន័យត្រូវបានរក្សាទុក។")
+                    st.success("រួចរាល់!")
     with c2:
-        if st.button("🗑️ លុបទិន្នន័យ (Clear)"):
+        if st.button("🗑️ Clear"):
             st.session_state.generated_srt = ""; st.rerun()
 
     if st.session_state.generated_srt:
         st.text_area("លទ្ធផល SRT", st.session_state.generated_srt, height=300)
-        st.info("👉 ទិន្នន័យត្រូវបានចងចាំក្នុងប្រព័ន្ធរួចហើយ។ សូមប្តូរទៅផ្នែក 'Dubbing' ដើម្បីបន្ត។")
 
 # --- ៦. ទំព័រទី ២: DUBBING ---
 else:
     st.title("🎬 Step 2: AI Dubbing")
     
-    # ប៊ូតុងទាញទិន្នន័យពីទំព័រមុន
-    srt_from_p1 = st.session_state.get('generated_srt', "")
-    
-    if srt_from_p1 and 'data' not in st.session_state:
-        st.info("✅ ឃើញមានអត្ថបទ SRT ពី Step 1។")
-        if st.button("📥 ប្រើអត្ថបទពី Step 1 ដើម្បីបកប្រែ"):
-            subs = list(srt.parse(srt_from_p1))
+    if st.session_state.get('generated_srt') and 'data' not in st.session_state:
+        if st.button("📥 ប្រើអត្ថបទពី Step 1"):
+            subs = list(srt.parse(st.session_state.generated_srt))
             tr_en, tr_km = GoogleTranslator(source='auto', target='en'), GoogleTranslator(source='en', target='km')
             data = []
             p = st.empty()
@@ -175,65 +151,30 @@ else:
                 data.append({"ID": i, "Select": False, "English": en, "Khmer_Text": km, "Voice": "Male", "Start": s.start, "End": s.end})
             st.session_state.data = data
             st.rerun()
-    
-    # បើគ្មានទិន្នន័យពី Step 1 ឱ្យ Upload ថ្មី
-    if not srt_from_p1 and 'data' not in st.session_state:
-        file = st.file_uploader("ឬ Upload File .srt ផ្ទាល់ខ្លួន", type=["srt"])
-        if file:
-            if st.button("បកប្រែអត្ថបទដែល Upload"):
-                subs = list(srt.parse(file.getvalue().decode("utf-8")))
-                tr_en, tr_km = GoogleTranslator(source='auto', target='en'), GoogleTranslator(source='en', target='km')
-                data = []
-                p = st.empty()
-                for i, s in enumerate(subs):
-                    p.write(f"បកប្រែឃ្លាទី {i+1}...")
-                    en = tr_en.translate(s.content)
-                    km = localize_khmer(tr_km.translate(en))
-                    data.append({"ID": i, "Select": False, "English": en, "Khmer_Text": km, "Voice": "Male", "Start": s.start, "End": s.end})
-                st.session_state.data = data
-                st.rerun()
 
-    # តំបន់គ្រប់គ្រងការ Dubbing
     if st.session_state.get('data'):
         df = pd.DataFrame(st.session_state.data)
-        
-        # បង្ហាញ Tabs ដើម្បីឱ្យស្រួលមើលលើទូរស័ព្ទ
         tab_edit, tab_setting, tab_process = st.tabs(["📝 កែអត្ថបទ", "⚙️ កំណត់សម្លេង", "🎵 ផលិត MP3"])
         
         with tab_edit:
-            st.subheader("ផ្ទៀងផ្ទាត់អក្សរខ្មែរ")
-            # ប៊ូតុងផ្លាស់ប្តូរភេទរហ័ស
-            cx1, cx2 = st.columns(2)
-            if cx1.button("👩 ស្រីទាំងអស់"): 
-                df['Voice'] = 'Female'; st.session_state.data = df.to_dict('records'); st.rerun()
-            if cx2.button("👨 ប្រុសទាំងអស់"): 
-                df['Voice'] = 'Male'; st.session_state.data = df.to_dict('records'); st.rerun()
-            
-            # Editor
             edited_df = st.data_editor(df, use_container_width=True, hide_index=True,
                 column_config={
                     "Select": st.column_config.CheckboxColumn("✔"),
                     "English": st.column_config.TextColumn("EN", disabled=True),
-                    "Khmer_Text": st.column_config.TextColumn("KH (កែសម្រួល)", width="large"),
+                    "Khmer_Text": st.column_config.TextColumn("KH", width="large"),
                     "Voice": st.column_config.SelectboxColumn("ភេទ", options=["Male", "Female"]),
                     "ID":None, "Start":None, "End":None
                 })
-            
-            c_save, c_reset = st.columns(2)
-            if c_save.button("💾 រក្សាទុកការកែ (Save)"):
+            if st.button("💾 Save Changes"):
                 st.session_state.data = edited_df.to_dict('records'); st.success("រក្សាទុកជោគជ័យ!")
-            if c_reset.button("🔴 Reset Project"):
-                st.session_state.data = None; st.session_state.final_voice = None; st.rerun()
 
         with tab_setting:
-            st.subheader("ការកំណត់សម្លេង")
-            speed = st.slider("ល្បឿនសម្លេង AI (%)", -50, 50, 15)
-            bgm_file = st.file_uploader("បន្ថែមភ្លេងផ្ទៃក្រោយ (BGM)", type=["mp3"])
+            speed = st.slider("ល្បឿនសម្លេងបន្ថែម (%)", -50, 50, 0)
+            bgm_file = st.file_uploader("បន្ថែមភ្លេង BGM", type=["mp3"])
             bgm_vol = st.slider("កម្រិតសម្លេង BGM", 0, 100, 20)
 
         with tab_process:
-            st.subheader("ផលិត និងទាញយក")
-            if st.button("🚀 ចាប់ផ្ដើមផលិតសម្លេង (START)", type="primary", use_container_width=True):
+            if st.button("🚀 START DUBBING", type="primary"):
                 stat = st.empty(); pb = st.progress(0)
                 res_audio = asyncio.run(process_audio(st.session_state.data, speed, stat, pb))
                 if bgm_file:
@@ -242,10 +183,8 @@ else:
                     res_audio = res_audio.overlay(back[:len(res_audio)])
                 res_audio.export("final.mp3", format="mp3")
                 with open("final.mp3", "rb") as f: st.session_state.final_voice = f.read()
-                st.success("ផលិតរួចរាល់!")
+                st.success("រួចរាល់!")
             
             if st.session_state.get('final_voice'):
                 st.audio(st.session_state.final_voice)
-                st.download_button("📥 ទាញយកលទ្ធផល (MP3)", st.session_state.final_voice, "dub_final.mp3")
-
-# រក្សាសិទ្ធិដោយ Reach AI
+                st.download_button("📥 ទាញយក MP3", st.session_state.final_voice, "dub_final.mp3")
