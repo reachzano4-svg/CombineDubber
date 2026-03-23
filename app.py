@@ -48,6 +48,7 @@ def format_time(seconds):
 
 def simplify_khmer(text):
     if not text: return ""
+    # សម្រួលពាក្យបកប្រែឱ្យខ្លី និងងាយស្រួលអានទាន់នាទី
     replaces = {
         "តើ(.*)មែនទេ": r"\1មែនអត់?",
         "របស់អ្នក": "ឯង",
@@ -55,7 +56,9 @@ def simplify_khmer(text):
         "ចាស": "ចា៎",
         "និយាយមិនសមហេតុផល": "និយាយរញ៉េរញ៉ៃ",
         "ស្តាប់បង្គាប់": "ស្តាប់សម្តី",
-        "ដោយខ្លួនឯង": "ខ្លួនឯង"
+        "ដោយខ្លួនឯង": "ខ្លួនឯង",
+        "តើអ្នកអាច": "អាច",
+        "សូមអភ័យទោស": "សុំទោស"
     }
     for p, r in replaces.items():
         text = re.sub(p, r, text)
@@ -78,7 +81,6 @@ async def process_audio(data, base_speed, status, progress):
             combined += AudioSegment.silent(duration=start_ms - current_ms)
             current_ms = start_ms
 
-        # ឆែកមើលភេទសម្លេងដែលបងបានរើសក្នុងតារាង
         voice = "km-KH-SreymomNeural" if row['Voice'] == "Female" else "km-KH-PisethNeural"
         tmp_file = f"temp_{i}.mp3"
         await edge_tts.Communicate(text, voice, rate=f"{base_speed:+}%").save(tmp_file)
@@ -87,6 +89,7 @@ async def process_audio(data, base_speed, status, progress):
             seg = AudioSegment.from_file(tmp_file)
             duration_voice = len(seg)
             
+            # បើលើសនាទី Subtitle បន្តិចបន្តួច ទុកឱ្យវាអានធម្មតា (Sync Buffer)
             if duration_voice > (duration_srt + 500):
                 ratio = duration_voice / duration_srt
                 seg = speedup(seg, playback_speed=min(ratio, 1.4), chunk_size=150, crossfade=25)
@@ -104,7 +107,7 @@ if st.sidebar.button("🚪 Logout"):
     st.session_state.logged_in = False
     st.rerun()
 
-# --- ៥. ទំព័រទី ១: TRANSCRIBE ---
+# --- ៥. ទំព័រទី ១: TRANSCRIBE (Smart Merging) ---
 if menu == "បំប្លែងវីដេអូ (Transcribe)":
     st.title("🎙️ Step 1: Video to SRT")
     if 'generated_srt' not in st.session_state: st.session_state.generated_srt = ""
@@ -113,7 +116,7 @@ if menu == "បំប្លែងវីដេអូ (Transcribe)":
     
     if st.button("🚀 ចាប់ផ្ដើមបំប្លែង", type="primary"):
         if video_file:
-            with st.spinner("កំពុងស្តាប់ និងរៀបចំឃ្លា..."):
+            with st.spinner("កំពុងស្តាប់ និងរៀបចំឃ្លាឱ្យវែងសមរម្យ..."):
                 with open("temp.mp4", "wb") as f: f.write(video_file.getbuffer())
                 model = whisper.load_model("base")
                 res = model.transcribe("temp.mp4")
@@ -123,7 +126,7 @@ if menu == "បំប្លែងវីដេអូ (Transcribe)":
                 if segments:
                     curr = segments[0]
                     for next_seg in segments[1:]:
-                        if (curr['end'] - curr['start']) < 2.5:
+                        if (curr['end'] - curr['start']) < 2.5: 
                             curr['end'] = next_seg['end']
                             curr['text'] += " " + next_seg['text']
                         else:
@@ -142,7 +145,7 @@ if menu == "បំប្លែងវីដេអូ (Transcribe)":
         if st.button("🗑️ Clear"):
             st.session_state.generated_srt = ""; st.rerun()
 
-# --- ៦. ទំព័រទី ២: DUBBING ---
+# --- ៦. ទំព័រទី ២: DUBBING (Quick Actions) ---
 else:
     st.title("🎬 Step 2: AI Dubbing")
     srt_from_p1 = st.session_state.get('generated_srt', "")
@@ -154,67 +157,60 @@ else:
             data = []
             p = st.empty()
             for i, s in enumerate(subs):
-                p.write(f"កំពុងបកប្រែឃ្លាទី {i+1}...")
+                p.write(f"បកប្រែឃ្លាទី {i+1}...")
                 en = tr_en.translate(s.content)
                 km = simplify_khmer(tr_km.translate(en))
-                # កន្លែងនេះ Default យក Male ឱ្យបងសិន
                 data.append({"ID": i, "Select": False, "English": en, "Khmer_Text": km, "Voice": "Male", "Start": s.start, "End": s.end})
             st.session_state.data = data
             st.rerun()
 
     if st.session_state.get('data'):
+        # បំប្លែងទិន្នន័យទៅជា DataFrame សម្រាប់ Editor
         df = pd.DataFrame(st.session_state.data)
-        tab_edit, tab_setting, tab_process = st.tabs(["📝 កែអត្ថបទ", "⚙️ កំណត់សម្លេង", "🎵 ផលិត MP3"])
+        
+        tab_edit, tab_setting, tab_process = st.tabs(["📝 កែអត្ថបទ & រើសភេទ", "⚙️ កំណត់សម្លេង", "🎵 ផលិត MP3"])
         
         with tab_edit:
-            # ១. តារាងសម្រាប់កែ និង Tick ជ្រើសរើសជួរ
+            st.markdown("### 📝 តារាងកែសម្រួល")
             edited_df = st.data_editor(df, use_container_width=True, hide_index=True,
                 column_config={
-                    "Select": st.column_config.CheckboxColumn("រើសជួរ", default=False),
+                    "Select": st.column_config.CheckboxColumn("រើសជួរ (Tick)", default=False),
                     "English": st.column_config.TextColumn("EN (ដើម)", disabled=True),
                     "Khmer_Text": st.column_config.TextColumn("KH (កែសម្រួល)", width="large"),
                     "Voice": st.column_config.SelectboxColumn("ភេទសម្លេង", options=["Male", "Female"]),
                     "ID":None, "Start":None, "End":None
                 })
             
-            # រក្សាទុកទិន្នន័យដែលកែក្នុងតារាងសិន
-            if st.button("💾 រក្សាទុកការកែអត្ថបទ (Save Text)"):
-                st.session_state.data = edited_df.to_dict('records')
-                st.success("រក្សាទុកជោគជ័យ!")
-                st.rerun()
-
+            # ប៊ូតុងបញ្ជាលឿន (Quick Actions)
             st.divider()
             st.markdown("### 🛠️ បញ្ជាលឿន (Quick Actions)")
-            st.info("💡 គន្លឹះ៖ ចុច Tick ក្នុងប្រអប់ 'រើសជួរ' ខាងលើ រួចចុចប៊ូតុងខាងក្រោមដើម្បីដូរភេទសម្លេងជារួម")
+            c1, c2, c3, c4 = st.columns(4)
             
-            col1, col2, col3, col4 = st.columns(4)
-            
-            with col1:
-                if st.button("👩‍🦰 ដូរជួរដែលរើស -> ស្រី"):
+            with c1:
+                if st.button("👩‍🦰 ដូរជួរដែល Tick -> ស្រី"):
                     for item in st.session_state.data:
-                        # ឆែកមើលជួរណាដែលបងបាន Tick Select ក្នុង dataframe
                         idx = item['ID']
+                        # ឆែកមើលជួរណាខ្លះដែលបងបាន Tick ក្នុង Editor
                         if edited_df.loc[edited_df['ID'] == idx, 'Select'].values[0]:
                             item['Voice'] = "Female"
                     st.rerun()
             
-            with col2:
-                if st.button("👨‍🦱 ដូរជួរដែលរើស -> ប្រុស"):
+            with c2:
+                if st.button("👨‍🦱 ដូរជួរដែល Tick -> ប្រុស"):
                     for item in st.session_state.data:
                         idx = item['ID']
                         if edited_df.loc[edited_df['ID'] == idx, 'Select'].values[0]:
                             item['Voice'] = "Male"
                     st.rerun()
             
-            with col3:
-                if st.button("🌸 ស្រីទាំងអស់"):
-                    for item in st.session_state.data: item['Voice'] = "Female"
-                    st.rerun()
+            with c3:
+                if st.button("💾 រក្សាទុកការកែ (Save)"):
+                    st.session_state.data = edited_df.to_dict('records')
+                    st.success("រក្សាទុកជោគជ័យ!")
             
-            with col4:
-                if st.button("💎 ប្រុសទាំងអស់"):
-                    for item in st.session_state.data: item['Voice'] = "Male"
-                    st.rerun()
+            with c4:
+                if st.button("🔴 Reset ថ្មី"):
+                    st.session_state.data = None; st.rerun()
 
         with tab_setting:
             speed = st.slider("ល្បឿនសម្លេងមេ (%)", -50, 50, 0)
