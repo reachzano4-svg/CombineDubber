@@ -10,7 +10,7 @@ import whisper
 import datetime
 import asyncio, edge_tts, srt, os, re, pandas as pd
 from pydub import AudioSegment
-from pydub.effects import speedup  # បន្ថែមការប្រើប្រាស់ speedup ឱ្យត្រូវតាមបច្ចេកទេស
+from pydub.effects import speedup
 from deep_translator import GoogleTranslator
 
 # --- ១. កំណត់ Page Config ---
@@ -46,13 +46,22 @@ def format_time(seconds):
     milis = int((td.total_seconds() - total_sec) * 1000)
     return f"{total_sec // 3600:02}:{(total_sec % 3600) // 60:02}:{total_sec % 60:02},{milis:03}"
 
-def localize_khmer(text):
+def simplify_khmer(text):
     if not text: return ""
-    slang_map = {r"តើ(.*)មែនទេ": r"\1មែនអត់?", r"អ្នក": "ឯង", r"បាទ": "បាទបង", r"ចាស": "ចា៎"}
-    for p, r in slang_map.items(): text = re.sub(p, r, text)
+    # សម្រួលពាក្យដែលបកមកវែងៗ ឱ្យទៅជាភាសានិយាយខ្លីៗ
+    replaces = {
+        "តើ(.*)មែនទេ": r"\1មែនអត់?",
+        "របស់អ្នក": "ឯង",
+        "បាទ": "បាទបង",
+        "ចាស": "ចា៎",
+        "និយាយមិនសមហេតុផល": "និយាយរញ៉េរញ៉ៃ",
+        "ស្តាប់បង្គាប់": "ស្តាប់សម្តី",
+        "ដោយខ្លួនឯង": "ខ្លួនឯង"
+    }
+    for p, r in replaces.items():
+        text = re.sub(p, r, text)
     return text.strip()
 
-# មុខងារផលិតសម្លេងដែលមានភាពសុក្រិតខ្ពស់
 async def process_audio(data, base_speed, status, progress):
     combined = AudioSegment.silent(duration=0)
     current_ms = 0
@@ -78,15 +87,16 @@ async def process_audio(data, base_speed, status, progress):
             seg = AudioSegment.from_file(tmp_file)
             duration_voice = len(seg)
             
-            # បើលើសនាទី Subtitle តិចតួច (ក្រោម 800ms) មិនបាច់មួលសម្លេងឱ្យលឿនទេ 
-            # ទុកឱ្យវាអានធម្មតាដើម្បីឱ្យពិរោះ តែបើលើសខ្លាំងទើបមួលល្បឿន
-            if duration_voice > (duration_srt + 800):
+            # បើលើសនាទី Subtitle បន្តិចបន្តួច (ក្រោម 500ms) ទុកឱ្យវាអានធម្មតាឱ្យចប់កុំឱ្យញាប់
+            if duration_voice > (duration_srt + 500):
                 ratio = duration_voice / duration_srt
-                seg = speedup(seg, playback_speed=min(ratio, 1.5), chunk_size=150, crossfade=25)
+                # មួលល្បឿនឱ្យលឿនបន្តិច តែមិនឱ្យប្តូរ Pitch
+                seg = speedup(seg, playback_speed=min(ratio, 1.4), chunk_size=150, crossfade=25)
             
             combined += seg
             current_ms += len(seg)
-            os.remove(tmp_file)
+            try: os.remove(tmp_file)
+            except: pass
             
     return combined
 
@@ -96,49 +106,44 @@ if st.sidebar.button("🚪 Logout"):
     st.session_state.logged_in = False
     st.rerun()
 
-# --- ៥. ទំព័រទី ១: TRANSCRIBE ---
+# --- ៥. ទំព័រទី ១: TRANSCRIBE (Smart Merging) ---
 if menu == "បំប្លែងវីដេអូ (Transcribe)":
     st.title("🎙️ Step 1: Video to SRT")
     if 'generated_srt' not in st.session_state: st.session_state.generated_srt = ""
 
     video_file = st.file_uploader("ជ្រើសរើសវីដេអូ", type=["mp4", "mp3", "mov", "m4a"])
     
-    c1, c2 = st.columns(2)
-    with c1:
-        if st.button("🚀 ចាប់ផ្ដើមបំប្លែង", type="primary"):
-            if video_file:
-                with st.spinner("កំពុងស្តាប់ និងរៀបចំឃ្លាឱ្យសមស្រប..."):
-                    with open("temp.mp4", "wb") as f: f.write(video_file.getbuffer())
-                    model = whisper.load_model("base")
-                    res = model.transcribe("temp.mp4")
-                    
-                    # --- បច្ចេកទេសបញ្ចូលឃ្លាខ្លីៗឱ្យទៅជាវែង (Smart Merging) ---
-                    # ជួយឱ្យ AI មានពេលនិយាយបានច្រើន និងមិនបាច់ប្រញាប់មួលសម្លេងឱ្យលឿនពេក
-                    segments = res['segments']
-                    merged = []
-                    if segments:
-                        curr = segments[0]
-                        for next_seg in segments[1:]:
-                            # បើឃ្លាមុនខ្លីជាង ២.៥ វិនាទី ឱ្យបូកចូលគ្នា
-                            if (curr['end'] - curr['start']) < 2.5:
-                                curr['end'] = next_seg['end']
-                                curr['text'] += " " + next_seg['text']
-                            else:
-                                merged.append(curr)
-                                curr = next_seg
-                        merged.append(curr)
-                    
-                    srt_out = ""
-                    for i, s in enumerate(merged):
-                        srt_out += f"{i+1}\n{format_time(s['start'])} --> {format_time(s['end'])}\n{s['text'].strip()}\n\n"
-                    st.session_state.generated_srt = srt_out
-                    st.success("រួចរាល់!")
-    with c2:
-        if st.button("🗑️ លុបទិន្នន័យ (Clear)"):
-            st.session_state.generated_srt = ""; st.rerun()
+    if st.button("🚀 ចាប់ផ្ដើមបំប្លែង", type="primary"):
+        if video_file:
+            with st.spinner("កំពុងស្តាប់ និងបញ្ចូលឃ្លាឱ្យវែងសមស្រប..."):
+                with open("temp.mp4", "wb") as f: f.write(video_file.getbuffer())
+                model = whisper.load_model("base")
+                res = model.transcribe("temp.mp4")
+                
+                # បញ្ចូលឃ្លាខ្លីៗឱ្យទៅជាវែង ដើម្បីកុំឱ្យ AI និយាយញាប់ពេក
+                segments = res['segments']
+                merged = []
+                if segments:
+                    curr = segments[0]
+                    for next_seg in segments[1:]:
+                        if (curr['end'] - curr['start']) < 2.5: # បើខ្លីជាង 2.5 វិនាទី ឱ្យបូកបញ្ចូលគ្នា
+                            curr['end'] = next_seg['end']
+                            curr['text'] += " " + next_seg['text']
+                        else:
+                            merged.append(curr)
+                            curr = next_seg
+                    merged.append(curr)
+                
+                srt_out = ""
+                for i, s in enumerate(merged):
+                    srt_out += f"{i+1}\n{format_time(s['start'])} --> {format_time(s['end'])}\n{s['text'].strip()}\n\n"
+                st.session_state.generated_srt = srt_out
+                st.success("រួចរាល់!")
 
     if st.session_state.generated_srt:
         st.text_area("លទ្ធផល SRT", st.session_state.generated_srt, height=300)
+        if st.button("🗑️ លុបទិន្នន័យ (Clear)"):
+            st.session_state.generated_srt = ""; st.rerun()
 
 # --- ៦. ទំព័រទី ២: DUBBING ---
 else:
@@ -146,15 +151,15 @@ else:
     srt_from_p1 = st.session_state.get('generated_srt', "")
     
     if srt_from_p1 and 'data' not in st.session_state:
-        if st.button("📥 ចាប់ផ្ដើមប្រើអត្ថបទពី Step 1"):
+        if st.button("📥 បកប្រែអត្ថបទពី Step 1"):
             subs = list(srt.parse(srt_from_p1))
             tr_en, tr_km = GoogleTranslator(source='auto', target='en'), GoogleTranslator(source='en', target='km')
             data = []
             p = st.empty()
             for i, s in enumerate(subs):
-                p.write(f"បកប្រែឃ្លាទី {i+1}...")
+                p.write(f"កំពុងបកប្រែឃ្លាទី {i+1}...")
                 en = tr_en.translate(s.content)
-                km = localize_khmer(tr_km.translate(en))
+                km = simplify_khmer(tr_km.translate(en)) # ប្រើមុខងារសម្រួលឱ្យខ្លី
                 data.append({"ID": i, "Select": False, "English": en, "Khmer_Text": km, "Voice": "Male", "Start": s.start, "End": s.end})
             st.session_state.data = data
             st.rerun()
@@ -176,12 +181,12 @@ else:
                 st.session_state.data = edited_df.to_dict('records'); st.success("រក្សាទុកជោគជ័យ!")
 
         with tab_setting:
-            speed = st.slider("ល្បឿនសម្លេងបន្ថែម (%)", -50, 50, 0)
-            bgm_file = st.file_uploader("បន្ថែមភ្លេងផ្ទៃក្រោយ (BGM)", type=["mp3"])
+            speed = st.slider("ល្បឿនសម្លេងមេ (%)", -50, 50, 0)
+            bgm_file = st.file_uploader("បន្ថែមភ្លេង BGM", type=["mp3"])
             bgm_vol = st.slider("កម្រិតសម្លេង BGM", 0, 100, 20)
 
         with tab_process:
-            if st.button("🚀 START DUBBING", type="primary"):
+            if st.button("🚀 ចាប់ផ្ដើមផលិត (START)", type="primary"):
                 stat = st.empty(); pb = st.progress(0)
                 res_audio = asyncio.run(process_audio(st.session_state.data, speed, stat, pb))
                 if bgm_file:
@@ -194,4 +199,4 @@ else:
             
             if st.session_state.get('final_voice'):
                 st.audio(st.session_state.final_voice)
-                st.download_button("📥 ទាញយកលទ្ធផល (MP3)", st.session_state.final_voice, "dub_final.mp3")
+                st.download_button("📥 ទាញយក MP3", st.session_state.final_voice, "dub_final.mp3")
