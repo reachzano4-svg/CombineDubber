@@ -3,6 +3,15 @@ import whisper
 import datetime
 import asyncio, edge_tts, srt, os, re, pandas as pd
 from pydub import AudioSegment
+try:
+    import audioop
+except ImportError:
+    import audioop_lts as audioop
+    import sys
+    sys.modules['audioop'] = audioop
+
+import streamlit as st
+# ... បន្តកូដផ្សេងទៀត ...
 from deep_translator import GoogleTranslator
 from audiostretchy.stretch import stretch_audio
 
