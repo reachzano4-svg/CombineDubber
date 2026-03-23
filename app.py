@@ -64,32 +64,54 @@ def localize_khmer(text):
 
 async def process_audio(data, speed, status, progress):
     combined = AudioSegment.silent(duration=0)
-    current_ms = 0
+    current_ms = 0  # រាប់នាទីបច្ចុប្បន្ននៃសម្លេងដែលផលិតបាន
+    
     for i, row in enumerate(data):
         progress.progress((i + 1) / len(data))
         status.write(f"🎙️ កំពុងផលិតឃ្លាទី {i+1}...")
-        text = str(row['Khmer_Text']).strip()
-        start_ms = row['Start'].total_seconds() * 1000
-        duration = (row['End'] - row['Start']).total_seconds() * 1000
         
+        text = str(row['Khmer_Text']).strip()
+        start_ms = row['Start'].total_seconds() * 1000  # នាទីចាប់ផ្ដើមក្នុង SRT
+        end_ms = row['End'].total_seconds() * 1000      # នាទីបញ្ចប់ក្នុង SRT
+        duration_srt = end_ms - start_ms               # រយៈពេលដែលត្រូវនិយាយ
+        
+        # ១. បន្ថែមចន្លោះស្ងាត់ (Silence) បើនាទីចាប់ផ្ដើមនៅឆ្ងាយពីនាទីបច្ចុប្បន្ន
         if start_ms > current_ms:
-            combined += AudioSegment.silent(duration=start_ms - current_ms)
+            silence_gap = start_ms - current_ms
+            combined += AudioSegment.silent(duration=silence_gap)
             current_ms = start_ms
-            
+
+        # ២. ផលិតសម្លេងពី AI
         v = "km-KH-SreymomNeural" if row['Voice'] == "Female" else "km-KH-PisethNeural"
         tmp = f"t_{i}.mp3"
         await edge_tts.Communicate(text, v, rate=f"{speed+20:+}%").save(tmp)
         
         if os.path.exists(tmp):
             seg = AudioSegment.from_file(tmp)
-            if len(seg) > duration > 0:
-                wav = f"t_{i}.wav"; seg.export(wav, format="wav")
-                stretch_audio(wav, f"s_{i}.wav", min(len(seg)/duration, 1.3))
+            duration_voice = len(seg)
+            
+            # ៣. បន្ថយ ឬតម្លើងល្បឿនសម្លេងឱ្យត្រូវនឹងរយៈពេលក្នុង SRT (Time Stretching)
+            # បើសម្លេងវែងជាងនាទីក្នុង SRT យើងត្រូវបង្កើនល្បឿនឱ្យវាខ្លីសមល្មម
+            wav = f"t_{i}.wav"
+            seg.export(wav, format="wav")
+            
+            # គណនា Ratio (បើ Ratio > 1 គឺសម្លេងនឹងលឿនជាងមុន)
+            ratio = duration_voice / duration_srt
+            
+            # បើលើសគ្នាលើសពី 10% ទើបយើងធ្វើការ Stretch
+            if ratio > 1.1:
+                stretch_audio(wav, f"s_{i}.wav", min(ratio, 1.5)) # ល្បឿនអតិបរមា 1.5x ដើម្បីកុំឱ្យស្ដាប់មិនទាន់
                 seg = AudioSegment.from_file(f"s_{i}.wav")
-                if os.path.exists(wav): os.remove(wav)
                 if os.path.exists(f"s_{i}.wav"): os.remove(f"s_{i}.wav")
-            combined += seg; current_ms += len(seg)
+            
+            # ៤. បញ្ចូលសម្លេងចូលក្នុង File រួម
+            combined += seg
+            current_ms += len(seg)
+            
+            # លុប File បណ្ដោះអាសន្ន
+            if os.path.exists(wav): os.remove(wav)
             if os.path.exists(tmp): os.remove(tmp)
+            
     return combined
 
 # --- ៤. Navigation ---
