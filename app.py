@@ -48,30 +48,20 @@ def format_time(seconds):
 
 def simplify_khmer(text):
     if not text: return ""
-    # សម្រួលពាក្យបកប្រែឱ្យខ្លី និងងាយស្រួលអានទាន់នាទី
     replaces = {
-        "តើ(.*)មែនទេ": r"\1មែនអត់?",
-        "របស់អ្នក": "ឯង",
-        "បាទ": "បាទបង",
-        "ចាស": "ចា៎",
-        "និយាយមិនសមហេតុផល": "និយាយរញ៉េរញ៉ៃ",
-        "ស្តាប់បង្គាប់": "ស្តាប់សម្តី",
-        "ដោយខ្លួនឯង": "ខ្លួនឯង",
-        "តើអ្នកអាច": "អាច",
-        "សូមអភ័យទោស": "សុំទោស"
+        "តើ(.*)មែនទេ": r"\1មែនអត់?", "របស់អ្នក": "ឯង", "បាទ": "បាទបង", "ចាស": "ចា៎",
+        "និយាយមិនសមហេតុផល": "និយាយរញ៉េរញ៉ៃ", "ស្តាប់បង្គាប់": "ស្តាប់សម្តី",
+        "ដោយខ្លួនឯង": "ខ្លួនឯង", "តើអ្នកអាច": "អាច", "សូមអភ័យទោស": "សុំទោស"
     }
-    for p, r in replaces.items():
-        text = re.sub(p, r, text)
+    for p, r in replaces.items(): text = re.sub(p, r, text)
     return text.strip()
 
 async def process_audio(data, base_speed, status, progress):
     combined = AudioSegment.silent(duration=0)
     current_ms = 0
-    
     for i, row in enumerate(data):
         progress.progress((i + 1) / len(data))
         status.write(f"🎙️ ផលិតឃ្លាទី {i+1}...")
-        
         text = str(row['Khmer_Text']).strip()
         start_ms = int(row['Start'].total_seconds() * 1000)
         end_ms = int(row['End'].total_seconds() * 1000)
@@ -88,17 +78,13 @@ async def process_audio(data, base_speed, status, progress):
         if os.path.exists(tmp_file):
             seg = AudioSegment.from_file(tmp_file)
             duration_voice = len(seg)
-            
-            # បើលើសនាទី Subtitle បន្តិចបន្តួច ទុកឱ្យវាអានធម្មតា (Sync Buffer)
             if duration_voice > (duration_srt + 500):
                 ratio = duration_voice / duration_srt
                 seg = speedup(seg, playback_speed=min(ratio, 1.4), chunk_size=150, crossfade=25)
-            
             combined += seg
             current_ms += len(seg)
             try: os.remove(tmp_file)
             except: pass
-            
     return combined
 
 # --- ៤. Navigation ---
@@ -107,49 +93,39 @@ if st.sidebar.button("🚪 Logout"):
     st.session_state.logged_in = False
     st.rerun()
 
-# --- ៥. ទំព័រទី ១: TRANSCRIBE (Smart Merging) ---
+# --- ៥. ទំព័រទី ១: TRANSCRIBE ---
 if menu == "បំប្លែងវីដេអូ (Transcribe)":
     st.title("🎙️ Step 1: Video to SRT")
     if 'generated_srt' not in st.session_state: st.session_state.generated_srt = ""
-
     video_file = st.file_uploader("ជ្រើសរើសវីដេអូ", type=["mp4", "mp3", "mov", "m4a"])
-    
     if st.button("🚀 ចាប់ផ្ដើមបំប្លែង", type="primary"):
         if video_file:
-            with st.spinner("កំពុងស្តាប់ និងរៀបចំឃ្លាឱ្យវែងសមរម្យ..."):
+            with st.spinner("កំពុងស្តាប់..."):
                 with open("temp.mp4", "wb") as f: f.write(video_file.getbuffer())
                 model = whisper.load_model("base")
                 res = model.transcribe("temp.mp4")
-                
                 segments = res['segments']
                 merged = []
                 if segments:
                     curr = segments[0]
                     for next_seg in segments[1:]:
-                        if (curr['end'] - curr['start']) < 2.5: 
+                        if (curr['end'] - curr['start']) < 2.5:
                             curr['end'] = next_seg['end']
                             curr['text'] += " " + next_seg['text']
-                        else:
-                            merged.append(curr)
-                            curr = next_seg
+                        else: merged.append(curr); curr = next_seg
                     merged.append(curr)
-                
                 srt_out = ""
                 for i, s in enumerate(merged):
                     srt_out += f"{i+1}\n{format_time(s['start'])} --> {format_time(s['end'])}\n{s['text'].strip()}\n\n"
-                st.session_state.generated_srt = srt_out
-                st.success("រួចរាល់!")
-
+                st.session_state.generated_srt = srt_out; st.success("រួចរាល់!")
     if st.session_state.generated_srt:
         st.text_area("លទ្ធផល SRT", st.session_state.generated_srt, height=300)
-        if st.button("🗑️ Clear"):
-            st.session_state.generated_srt = ""; st.rerun()
+        if st.button("🗑️ Clear"): st.session_state.generated_srt = ""; st.rerun()
 
-# --- ៦. ទំព័រទី ២: DUBBING (Quick Actions) ---
+# --- ៦. ទំព័រទី ២: DUBBING (Full Options) ---
 else:
     st.title("🎬 Step 2: AI Dubbing")
     srt_from_p1 = st.session_state.get('generated_srt', "")
-    
     if srt_from_p1 and 'data' not in st.session_state:
         if st.button("📥 បកប្រែអត្ថបទពី Step 1"):
             subs = list(srt.parse(srt_from_p1))
@@ -161,56 +137,58 @@ else:
                 en = tr_en.translate(s.content)
                 km = simplify_khmer(tr_km.translate(en))
                 data.append({"ID": i, "Select": False, "English": en, "Khmer_Text": km, "Voice": "Male", "Start": s.start, "End": s.end})
-            st.session_state.data = data
-            st.rerun()
+            st.session_state.data = data; st.rerun()
 
     if st.session_state.get('data'):
-        # បំប្លែងទិន្នន័យទៅជា DataFrame សម្រាប់ Editor
         df = pd.DataFrame(st.session_state.data)
-        
         tab_edit, tab_setting, tab_process = st.tabs(["📝 កែអត្ថបទ & រើសភេទ", "⚙️ កំណត់សម្លេង", "🎵 ផលិត MP3"])
         
         with tab_edit:
             st.markdown("### 📝 តារាងកែសម្រួល")
             edited_df = st.data_editor(df, use_container_width=True, hide_index=True,
                 column_config={
-                    "Select": st.column_config.CheckboxColumn("រើសជួរ (Tick)", default=False),
+                    "Select": st.column_config.CheckboxColumn("រើសជួរ", default=False),
                     "English": st.column_config.TextColumn("EN (ដើម)", disabled=True),
                     "Khmer_Text": st.column_config.TextColumn("KH (កែសម្រួល)", width="large"),
                     "Voice": st.column_config.SelectboxColumn("ភេទសម្លេង", options=["Male", "Female"]),
                     "ID":None, "Start":None, "End":None
                 })
-            
-            # ប៊ូតុងបញ្ជាលឿន (Quick Actions)
+
             st.divider()
             st.markdown("### 🛠️ បញ្ជាលឿន (Quick Actions)")
-            c1, c2, c3, c4 = st.columns(4)
             
+            # --- ជួរទី១: ដូរទាំងអស់ ---
+            c1, c2, c3 = st.columns(3)
             with c1:
+                if st.button("🌸 ស្រីទាំងអស់"):
+                    for item in st.session_state.data: item['Voice'] = "Female"
+                    st.rerun()
+            with c2:
+                if st.button("💎 ប្រុសទាំងអស់"):
+                    for item in st.session_state.data: item['Voice'] = "Male"
+                    st.rerun()
+            with c3:
+                if st.button("💾 រក្សាទុក (Save)"):
+                    st.session_state.data = edited_df.to_dict('records')
+                    st.success("រក្សាទុកជោគជ័យ!")
+
+            # --- ជួរទី២: ដូរតាមការ Tick ---
+            st.write("👉 **ដូរតាមការ Tick រើសជួរ:**")
+            c4, c5, c6 = st.columns(3)
+            with c4:
                 if st.button("👩‍🦰 ដូរជួរដែល Tick -> ស្រី"):
                     for item in st.session_state.data:
                         idx = item['ID']
-                        # ឆែកមើលជួរណាខ្លះដែលបងបាន Tick ក្នុង Editor
-                        if edited_df.loc[edited_df['ID'] == idx, 'Select'].values[0]:
-                            item['Voice'] = "Female"
+                        if edited_df.loc[edited_df['ID'] == idx, 'Select'].values[0]: item['Voice'] = "Female"
                     st.rerun()
-            
-            with c2:
+            with c5:
                 if st.button("👨‍🦱 ដូរជួរដែល Tick -> ប្រុស"):
                     for item in st.session_state.data:
                         idx = item['ID']
-                        if edited_df.loc[edited_df['ID'] == idx, 'Select'].values[0]:
-                            item['Voice'] = "Male"
+                        if edited_df.loc[edited_df['ID'] == idx, 'Select'].values[0]: item['Voice'] = "Male"
                     st.rerun()
-            
-            with c3:
-                if st.button("💾 រក្សាទុកការកែ (Save)"):
-                    st.session_state.data = edited_df.to_dict('records')
-                    st.success("រក្សាទុកជោគជ័យ!")
-            
-            with c4:
-                if st.button("🔴 Reset ថ្មី"):
-                    st.session_state.data = None; st.rerun()
+            with c6:
+                if st.button("🔴 Reset ថ្មី"): st.session_state.data = None; st.rerun()
 
         with tab_setting:
             speed = st.slider("ល្បឿនសម្លេងមេ (%)", -50, 50, 0)
@@ -228,7 +206,6 @@ else:
                 res_audio.export("final.mp3", format="mp3")
                 with open("final.mp3", "rb") as f: st.session_state.final_voice = f.read()
                 st.success("រួចរាល់!")
-            
             if st.session_state.get('final_voice'):
                 st.audio(st.session_state.final_voice)
                 st.download_button("📥 ទាញយក MP3", st.session_state.final_voice, "dub_final.mp3")
