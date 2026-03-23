@@ -57,6 +57,7 @@ def simplify_khmer(text):
     return text.strip()
 
 # កែសម្រួលថ្មី៖ ផលិត SRT ឱ្យ CapCut ស្គាល់ (UTF-8)
+# --- កែសម្រួលមុខងារផលិត SRT ឱ្យមានស្ដង់ដារ BOM សម្រាប់ Windows/CapCut ---
 def create_srt_download(data, lang_key):
     subs = []
     for i, row in enumerate(data):
@@ -66,8 +67,19 @@ def create_srt_download(data, lang_key):
             end=row['End'],
             content=row[lang_key]
         ))
-    # ប្រើ srt.compose ដើម្បីឱ្យទម្រង់ Timecode ត្រឹមត្រូវបំផុត
-    return srt.compose(subs)
+    # បន្ថែម \ufeff នៅខាងដើមគេ ដើម្បីឱ្យ Windows/CapCut ស្គាល់ថាជា UTF-8 ភ្លាម
+    return "\ufeff" + srt.compose(subs)
+
+# --- ក្នុង Tab Edit ត្រង់ប៊ូតុង Download កែបែបនេះ ---
+with cs2:
+    km_srt = create_srt_download(st.session_state.data, "Khmer_Text")
+    # ប្តូរ mime ទៅជា text/srt ដើម្បីឱ្យស្រួលប្រើ
+    st.download_button(
+        label="📥 Download Khmer SRT",
+        data=km_srt.encode('utf-8-sig'), # ប្រើ utf-8-sig ដើម្បីដោះស្រាយបញ្ហាចេញអក្សរចិន
+        file_name="sub_khmer.srt",
+        mime="text/plain"
+    )
 
 async def process_audio(data, base_speed, status, progress):
     combined = AudioSegment.silent(duration=0)
