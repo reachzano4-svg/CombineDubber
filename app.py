@@ -64,39 +64,51 @@ async def process_audio(data, base_speed, status, progress):
     
     for i, row in enumerate(data):
         progress.progress((i + 1) / len(data))
-        status.write(f"🎙️ ផលិតឃ្លាទី {i+1}...")
+        status.write(f"🎙️ កំពុងផលិតឃ្លាទី {i+1}...")
         
         text = str(row['Khmer_Text']).strip()
-        start_ms = row['Start'].total_seconds() * 1000
-        end_ms = row['End'].total_seconds() * 1000
+        # បំប្លែង Start/End ឱ្យទៅជា Milliseconds ឱ្យបានច្បាស់លាស់
+        start_ms = int(row['Start'].total_seconds() * 1000)
+        end_ms = int(row['End'].total_seconds() * 1000)
         duration_srt = end_ms - start_ms 
         
-        # ១. បញ្ចូលភាពស្ងាត់មុនឃ្លានីមួយៗ ដើម្បីឱ្យ Sync តាមម៉ោង
+        # ១. បញ្ចូលភាពស្ងាត់ (Silence) ដើម្បីឱ្យ Sync តាមម៉ោងចាប់ផ្ដើម
         if start_ms > current_ms:
-            combined += AudioSegment.silent(duration=start_ms - current_ms)
+            silence_gap = start_ms - current_ms
+            combined += AudioSegment.silent(duration=silence_gap)
             current_ms = start_ms
 
-        # ២. កំណត់សម្លេង (ស្រី/ប្រុស)
+        # ២. ផលិតសម្លេងពី AI (Edge-TTS)
         voice = "km-KH-SreymomNeural" if row['Voice'] == "Female" else "km-KH-PisethNeural"
         tmp_file = f"temp_{i}.mp3"
         
-        # ប្រើល្បឿនមូលដ្ឋានដែលអ្នកប្រើកំណត់
+        # ប្រើ Rate ដែលអ្នកប្រើកំណត់ជាមូលដ្ឋាន
         await edge_tts.Communicate(text, voice, rate=f"{base_speed:+}%").save(tmp_file)
         
         if os.path.exists(tmp_file):
             seg = AudioSegment.from_file(tmp_file)
+            duration_voice = len(seg)
             
-            # ៣. ពិនិត្យមើលថាបើអានលើសម៉ោង SRT យើងនឹងមួលឱ្យលឿន (Speed Up)
-            if len(seg) > duration_srt and duration_srt > 0:
-                speed_factor = len(seg) / duration_srt
-                # កំណត់ល្បឿនអតិបរមា ២ដង ដើម្បីកុំឱ្យបែកសម្លេង
-                if speed_factor > 1.0:
-                    seg = seg.speed_up(playback_speed=min(speed_factor, 2.0))
+            # ៣. បើលទ្ធផលសម្លេងវែងជាងនាទីក្នុង SRT យើងនឹងមួលឱ្យលឿន
+            if duration_voice > duration_srt and duration_srt > 0:
+                speed_factor = duration_voice / duration_srt
+                # កំណត់ល្បឿនអតិបរមា ២ដង ដើម្បីការពារការបែកសម្លេង
+                final_speed = min(speed_factor, 2.0)
+                
+                # បច្ចេកទេសប្តូរល្បឿនដោយមិនប្រើ speed_up (ដើម្បីជៀសវាង AttributeError)
+                new_sample_rate = int(seg.frame_rate * final_speed)
+                seg = seg._spawn(seg.raw_data, overrides={'frame_rate': new_sample_rate})
+                seg = seg.set_frame_rate(44100) # កំណត់មកកម្រិតស្ដង់ដារវិញ
             
-            # ៤. បន្ថែមសម្លេងចូល
+            # ៤. បញ្ចូលសម្លេងចូលក្នុងទិន្នន័យរួម
             combined += seg
             current_ms += len(seg)
-            os.remove(tmp_file)
+            
+            # លុប File បណ្ដោះអាសន្ន
+            try:
+                os.remove(tmp_file)
+            except:
+                pass
             
     return combined
 
