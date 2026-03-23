@@ -6,3 +6,4 @@ pandas
 pydub
 deep_translator
 audiostretchy
+audioop-lts
