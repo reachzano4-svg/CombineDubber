@@ -54,7 +54,10 @@ login()
 # --- ៣. Helper Functions ---
 def format_time(seconds):
     td = datetime.timedelta(seconds=seconds)
-    return str(td)[:-3].replace(".", ",") if "." in str(td) else str(td) + ",000"
+    total_sec = int(td.total_seconds())
+    milis = int((td.total_seconds() - total_sec) * 1000)
+    # បង្ខំឱ្យចេញទម្រង់ 00:00:00,000
+    return f"{total_sec // 3600:02}:{(total_sec % 3600) // 60:02}:{total_sec % 60:02},{milis:03}"
 
 def localize_khmer(text):
     if not text: return ""
@@ -64,21 +67,20 @@ def localize_khmer(text):
 
 async def process_audio(data, speed, status, progress):
     combined = AudioSegment.silent(duration=0)
-    current_ms = 0  # រាប់នាទីបច្ចុប្បន្ននៃសម្លេងដែលផលិតបាន
+    current_ms = 0
     
     for i, row in enumerate(data):
         progress.progress((i + 1) / len(data))
         status.write(f"🎙️ កំពុងផលិតឃ្លាទី {i+1}...")
         
         text = str(row['Khmer_Text']).strip()
-        start_ms = row['Start'].total_seconds() * 1000  # នាទីចាប់ផ្ដើមក្នុង SRT
-        end_ms = row['End'].total_seconds() * 1000      # នាទីបញ្ចប់ក្នុង SRT
-        duration_srt = end_ms - start_ms               # រយៈពេលដែលត្រូវនិយាយ
+        start_ms = row['Start'].total_seconds() * 1000
+        end_ms = row['End'].total_seconds() * 1000
+        duration_srt = end_ms - start_ms # រយៈពេលកំណត់ក្នុង Subtitle
         
-        # ១. បន្ថែមចន្លោះស្ងាត់ (Silence) បើនាទីចាប់ផ្ដើមនៅឆ្ងាយពីនាទីបច្ចុប្បន្ន
+        # ១. បន្ថែមចន្លោះស្ងាត់ (Silence) ឱ្យត្រូវតាមនាទីចាប់ផ្ដើម
         if start_ms > current_ms:
-            silence_gap = start_ms - current_ms
-            combined += AudioSegment.silent(duration=silence_gap)
+            combined += AudioSegment.silent(duration=start_ms - current_ms)
             current_ms = start_ms
 
         # ២. ផលិតសម្លេងពី AI
@@ -90,21 +92,25 @@ async def process_audio(data, speed, status, progress):
             seg = AudioSegment.from_file(tmp)
             duration_voice = len(seg)
             
-            # ៣. បន្ថយ ឬតម្លើងល្បឿនសម្លេងឱ្យត្រូវនឹងរយៈពេលក្នុង SRT (Time Stretching)
-            # បើសម្លេងវែងជាងនាទីក្នុង SRT យើងត្រូវបង្កើនល្បឿនឱ្យវាខ្លីសមល្មម
+            # ៣. ការគណនាល្បឿនអូតូ (Auto Stretching)
+            # យើងមិនប្រើការកាត់កន្ទុយចោលទេ ប៉ុន្តែយើងមួលល្បឿនឱ្យវាចប់ទាន់ពេល
             wav = f"t_{i}.wav"
             seg.export(wav, format="wav")
             
-            # គណនា Ratio (បើ Ratio > 1 គឺសម្លេងនឹងលឿនជាងមុន)
-            ratio = duration_voice / duration_srt
-            
-            # បើលើសគ្នាលើសពី 10% ទើបយើងធ្វើការ Stretch
-            if ratio > 1.1:
-                stretch_audio(wav, f"s_{i}.wav", min(ratio, 1.5)) # ល្បឿនអតិបរមា 1.5x ដើម្បីកុំឱ្យស្ដាប់មិនទាន់
+            # បើសម្លេង AI វែងជាងនាទី Subtitle លើសពី 50ms
+            if duration_voice > duration_srt + 50:
+                # គណនាថាត្រូវលឿនប៉ុន្មានដង ដើម្បីឱ្យនិយាយចប់ទាន់នាទីបញ្ចប់
+                # រូបមន្ត៖ រយៈពេលសម្លេង AI / រយៈពេល Subtitle
+                ratio = duration_voice / duration_srt
+                
+                # បង្កើនល្បឿនឱ្យត្រូវនឹង Ratio (អតិបរមា 2.0x ដើម្បីកុំឱ្យលឿនពេកស្ដាប់មិនយល់)
+                final_ratio = min(ratio, 2.0) 
+                stretch_audio(wav, f"s_{i}.wav", final_ratio)
                 seg = AudioSegment.from_file(f"s_{i}.wav")
+                
                 if os.path.exists(f"s_{i}.wav"): os.remove(f"s_{i}.wav")
             
-            # ៤. បញ្ចូលសម្លេងចូលក្នុង File រួម
+            # បន្ថែមសម្លេងចូលទៅក្នុង File រួម
             combined += seg
             current_ms += len(seg)
             
