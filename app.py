@@ -3,6 +3,7 @@ import whisper
 import datetime
 import asyncio, edge_tts, srt, os, re, pandas as pd
 from pydub import AudioSegment
+# --- កូដសម្រាប់បន្លំ System ឱ្យស្គាល់ audioop ក្នុង Python 3.14 ---
 try:
     import audioop
 except ImportError:
@@ -11,16 +12,19 @@ except ImportError:
     sys.modules['audioop'] = audioop
 
 import streamlit as st
-# ... បន្តកូដផ្សេងទៀត ...
+import whisper
+import datetime
+import asyncio, edge_tts, srt, os, re, pandas as pd
+from pydub import AudioSegment
 from deep_translator import GoogleTranslator
 from audiostretchy.stretch import stretch_audio
 
-# --- ១. ការកំណត់ Page Config (ត្រូវតែនៅខាងលើគេបង្អស់) ---
+# --- ១. ការកំណត់ Page Config ---
 st.set_page_config(page_title="Reach AI Master", layout="wide", initial_sidebar_state="expanded")
 
 # --- ២. ប្រព័ន្ធ Login ---
 USER_NAME = "admin"
-USER_PASSWORD = "reachzano" 
+USER_PASSWORD = "reachzano" # លេខសម្ងាត់បងគឺ reachzano
 
 def login():
     if "logged_in" not in st.session_state:
@@ -41,6 +45,9 @@ def login():
         st.stop()
 
 login()
+
+# --- ចាប់ពីទីនេះទៅ គឺជាកូដ Dubbing និង Transcribe របស់បងដែលនៅសល់ទាំងអស់ ---
+# (បងបន្តដាក់កូដ Helper Functions និង Navigation របស់បងចូលមក)
 
 # --- ៣. Helper Functions (Shared Functions) ---
 def format_time(seconds):
