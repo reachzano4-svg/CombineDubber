@@ -56,6 +56,15 @@ def simplify_khmer(text):
     for p, r in replaces.items(): text = re.sub(p, r, text)
     return text.strip()
 
+def create_srt_content(data, lang_key):
+    srt_content = ""
+    for i, row in enumerate(data):
+        start = format_time(row['Start'].total_seconds())
+        end = format_time(row['End'].total_seconds())
+        text = row[lang_key]
+        srt_content += f"{i+1}\n{start} --> {end}\n{text}\n\n"
+    return srt_content
+
 async def process_audio(data, base_speed, status, progress):
     combined = AudioSegment.silent(duration=0)
     current_ms = 0
@@ -122,7 +131,7 @@ if menu == "បំប្លែងវីដេអូ (Transcribe)":
         st.text_area("លទ្ធផល SRT", st.session_state.generated_srt, height=300)
         if st.button("🗑️ Clear"): st.session_state.generated_srt = ""; st.rerun()
 
-# --- ៦. ទំព័រទី ២: DUBBING (Full Options) ---
+# --- ៦. ទំព័រទី ២: DUBBING ---
 else:
     st.title("🎬 Step 2: AI Dubbing")
     srt_from_p1 = st.session_state.get('generated_srt', "")
@@ -157,7 +166,6 @@ else:
             st.divider()
             st.markdown("### 🛠️ បញ្ជាលឿន (Quick Actions)")
             
-            # --- ជួរទី១: ដូរទាំងអស់ ---
             c1, c2, c3 = st.columns(3)
             with c1:
                 if st.button("🌸 ស្រីទាំងអស់"):
@@ -172,7 +180,6 @@ else:
                     st.session_state.data = edited_df.to_dict('records')
                     st.success("រក្សាទុកជោគជ័យ!")
 
-            # --- ជួរទី២: ដូរតាមការ Tick ---
             st.write("👉 **ដូរតាមការ Tick រើសជួរ:**")
             c4, c5, c6 = st.columns(3)
             with c4:
@@ -189,6 +196,17 @@ else:
                     st.rerun()
             with c6:
                 if st.button("🔴 Reset ថ្មី"): st.session_state.data = None; st.rerun()
+
+            # --- ប៊ូតុងថ្មី៖ ទាញយក SRT ---
+            st.divider()
+            st.markdown("### 📄 ទាញយក Subtitle (SRT)")
+            cs1, cs2 = st.columns(2)
+            with cs1:
+                en_srt = create_srt_content(st.session_state.data, "English")
+                st.download_button("📥 Download English SRT", en_srt, "subtitle_en.srt")
+            with cs2:
+                km_srt = create_srt_content(st.session_state.data, "Khmer_Text")
+                st.download_button("📥 Download Khmer SRT", km_srt, "subtitle_kh.srt")
 
         with tab_setting:
             speed = st.slider("ល្បឿនសម្លេងមេ (%)", -50, 50, 0)
