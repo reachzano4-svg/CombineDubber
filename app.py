@@ -48,7 +48,7 @@ def login():
             if st.button("ចូលប្រើ", type="primary", use_container_width=True):
                 if user == USER_NAME and pw == USER_PASSWORD:
                     st.session_state.logged_in = True
-                    st.session_state.current_step = "Transcribe" # ចាប់ផ្តើមជំហានដំបូង
+                    st.session_state.current_step = 0 # 0 = Transcribe, 1 = Dubbing
                     st_javascript(f"localStorage.setItem('last_active', '{current_time}');")
                     if remember:
                         st_javascript(f"localStorage.setItem('reach_user', '{user}');")
@@ -104,25 +104,25 @@ async def process_audio(data, base_speed, status, progress):
             except: pass
     return combined
 
-# --- ៤. Navigation System ---
+# --- ៤. Navigation Logic ---
 if 'current_step' not in st.session_state:
-    st.session_state.current_step = "Transcribe"
+    st.session_state.current_step = 0 # ចាប់ផ្តើមនៅ Step 1
 
-st.sidebar.title(f"👤 {USER_NAME}")
-nav = st.sidebar.radio("ជំហានការងារ", ["បំប្លែងវីដេអូ (Transcribe)", "បញ្ចូលសម្លេង (Dubbing)"], 
-                       index=0 if st.session_state.current_step == "Transcribe" else 1, key="sidebar_nav")
+# បង្កើត Sidebar Radio ដែល Sync ជាមួយ State
+step_options = ["បំប្លែងវីដេអូ (Transcribe)", "បញ្ចូលសម្លេង (Dubbing)"]
+selected_step = st.sidebar.radio("ជំហានការងារ", step_options, index=st.session_state.current_step)
 
-# ធ្វើឱ្យ Navigation ក្នុង Sidebar Sync ជាមួយប៊ូតុង Next/Back
-if nav == "បំប្លែងវីដេអូ (Transcribe)": st.session_state.current_step = "Transcribe"
-else: st.session_state.current_step = "Dubbing"
+# បើអ្នកប្រើចុចប្តូរនៅ Sidebar ផ្ទាល់
+if selected_step == step_options[0]: st.session_state.current_step = 0
+else: st.session_state.current_step = 1
 
 if st.sidebar.button("🚪 Logout"):
     st_javascript("localStorage.removeItem('last_active');")
     st.session_state.logged_in = False
     st.rerun()
 
-# --- ៥. ទំព័រទី ១: TRANSCRIBE ---
-if st.session_state.current_step == "Transcribe":
+# --- ៥. ទំព័រទី ១: TRANSCRIBE (Step 0) ---
+if st.session_state.current_step == 0:
     st.title("🎙️ Step 1: Video to SRT")
     if 'generated_srt' not in st.session_state: st.session_state.generated_srt = ""
     
@@ -150,93 +150,103 @@ if st.session_state.current_step == "Transcribe":
     if st.session_state.generated_srt:
         st.text_area("លទ្ធផល SRT", st.session_state.generated_srt, height=250)
         st.divider()
-        col_n1, col_n2 = st.columns([5, 1])
-        with col_n1:
-            if st.button("🗑️ Reset Data"): st.session_state.generated_srt = ""; st.rerun()
-        with col_n2:
-            if st.button("បន្តទៅមុខ ➡️", type="primary"):
-                st.session_state.current_step = "Dubbing"
+        c_left, c_right = st.columns([5, 1])
+        with c_left:
+            if st.button("🗑️ Reset Data"): 
+                st.session_state.generated_srt = ""
+                if 'data' in st.session_state: del st.session_state.data
+                st.rerun()
+        with c_right:
+            if st.button("បន្តទៅមុខ ➡️", type="primary", use_container_width=True):
+                st.session_state.current_step = 1
                 st.rerun()
 
-# --- ៦. ទំព័រទី ២: DUBBING ---
+# --- ៦. ទំព័រទី ២: DUBBING (Step 1) ---
 else:
     st.title("🎬 Step 2: AI Dubbing")
     srt_input = st.session_state.get('generated_srt', "")
     
-    if srt_input and 'data' not in st.session_state:
-        if st.button("📥 ចាប់ផ្ដើមបកប្រែអត្ថបទពី Step 1", type="primary"):
-            subs = list(srt.parse(srt_input))
-            tr_en, tr_km = GoogleTranslator(source='auto', target='en'), GoogleTranslator(source='en', target='km')
-            data = []
-            p = st.empty()
-            for i, s in enumerate(subs):
-                p.write(f"បកប្រែឃ្លាទី {i+1}...")
-                en = tr_en.translate(s.content)
-                km = simplify_khmer(tr_km.translate(en))
-                data.append({"ID": i, "Select": False, "English": en, "Khmer_Text": km, "Voice": "Male", "Start": s.start, "End": s.end})
-            st.session_state.data = data; st.rerun()
+    if not srt_input:
+        st.warning("⚠️ សូមបំពេញ Step 1 ជាមុនសិន!")
+        if st.button("⬅️ ទៅកាន់ Step 1"):
+            st.session_state.current_step = 0
+            st.rerun()
+    else:
+        # បើមាន SRT តែមិនទាន់បកប្រែ
+        if 'data' not in st.session_state:
+            if st.button("📥 ចាប់ផ្ដើមបកប្រែអត្ថបទពី Step 1", type="primary"):
+                subs = list(srt.parse(srt_input))
+                tr_en, tr_km = GoogleTranslator(source='auto', target='en'), GoogleTranslator(source='en', target='km')
+                data = []
+                p = st.empty()
+                for i, s in enumerate(subs):
+                    p.write(f"បកប្រែឃ្លាទី {i+1}...")
+                    en = tr_en.translate(s.content)
+                    km = simplify_khmer(tr_km.translate(en))
+                    data.append({"ID": i, "Select": False, "English": en, "Khmer_Text": km, "Voice": "Male", "Start": s.start, "End": s.end})
+                st.session_state.data = data; st.rerun()
 
-    if st.session_state.get('data'):
-        df = pd.DataFrame(st.session_state.data)
-        tab_edit, tab_setting, tab_process = st.tabs(["📝 កែអត្ថបទ", "⚙️ កំណត់សម្លេង", "🎵 ផលិត MP3"])
-        
-        with tab_edit:
-            edited_df = st.data_editor(df, use_container_width=True, hide_index=True,
-                column_config={"Select": st.column_config.CheckboxColumn("រើស", default=False), "English": st.column_config.TextColumn("EN", disabled=True), "Khmer_Text": st.column_config.TextColumn("KH", width="large"), "Voice": st.column_config.SelectboxColumn("ភេទ", options=["Male", "Female"]), "ID":None, "Start":None, "End":None})
+        if st.session_state.get('data'):
+            df = pd.DataFrame(st.session_state.data)
+            tab_edit, tab_setting, tab_process = st.tabs(["📝 កែអត្ថបទ", "⚙️ កំណត់សម្លេង", "🎵 ផលិត MP3"])
             
-            st.divider()
-            # ប៊ូតុងបញ្ជាលឿន
-            c1, c2, c3, c4 = st.columns(4)
-            with c1:
-                if st.button("🌸 ស្រីទាំងអស់"):
-                    for item in st.session_state.data: item['Voice'] = "Female"
-                    st.rerun()
-            with c2:
-                if st.button("💎 ប្រុសទាំងអស់"):
-                    for item in st.session_state.data: item['Voice'] = "Male"
-                    st.rerun()
-            with c3:
-                if st.button("👩‍🦰 Tick -> ស្រី"):
-                    for item in st.session_state.data:
-                        if edited_df.loc[edited_df['ID'] == item['ID'], 'Select'].values[0]: item['Voice'] = "Female"
-                    st.rerun()
-            with c4:
-                if st.button("👨‍🦱 Tick -> ប្រុស"):
-                    for item in st.session_state.data:
-                        if edited_df.loc[edited_df['ID'] == item['ID'], 'Select'].values[0]: item['Voice'] = "Male"
-                    st.rerun()
+            with tab_edit:
+                edited_df = st.data_editor(df, use_container_width=True, hide_index=True,
+                    column_config={"Select": st.column_config.CheckboxColumn("រើស", default=False), "English": st.column_config.TextColumn("EN", disabled=True), "Khmer_Text": st.column_config.TextColumn("KH", width="large"), "Voice": st.column_config.SelectboxColumn("ភេទ", options=["Male", "Female"]), "ID":None, "Start":None, "End":None})
+                
+                st.divider()
+                # ប៊ូតុងបញ្ជាលឿន
+                c1, c2, c3, c4 = st.columns(4)
+                with c1:
+                    if st.button("🌸 ស្រីទាំងអស់"):
+                        for item in st.session_state.data: item['Voice'] = "Female"
+                        st.rerun()
+                with c2:
+                    if st.button("💎 ប្រុសទាំងអស់"):
+                        for item in st.session_state.data: item['Voice'] = "Male"
+                        st.rerun()
+                with c3:
+                    if st.button("👩‍🦰 Tick -> ស្រី"):
+                        for item in st.session_state.data:
+                            if edited_df.loc[edited_df['ID'] == item['ID'], 'Select'].values[0]: item['Voice'] = "Female"
+                        st.rerun()
+                with c4:
+                    if st.button("👨‍🦱 Tick -> ប្រុស"):
+                        for item in st.session_state.data:
+                            if edited_df.loc[edited_df['ID'] == item['ID'], 'Select'].values[0]: item['Voice'] = "Male"
+                        st.rerun()
+                
+                c_save, c_en, c_kh = st.columns(3)
+                with c_save:
+                    if st.button("💾 រក្សាទុកការកែ", use_container_width=True):
+                        st.session_state.data = edited_df.to_dict('records'); st.success("Saved!")
+                with c_en:
+                    en_srt = create_srt_download(st.session_state.data, "English")
+                    st.download_button("📥 Download EN SRT", en_srt.encode('utf-8-sig'), "en.srt", use_container_width=True)
+                with c_kh:
+                    km_srt = create_srt_download(st.session_state.data, "Khmer_Text")
+                    st.download_button("📥 Download KH SRT", km_srt.encode('utf-8-sig'), "kh.srt", use_container_width=True)
+
+            with tab_setting:
+                speed = st.slider("ល្បឿន (%)", -50, 50, 0)
+                bgm = st.file_uploader("BGM", type=["mp3"])
+                vol = st.slider("កម្រិតសម្លេង BGM", 0, 100, 20)
             
-            c_s1, c_s2, c_s3 = st.columns(3)
-            with c_s1:
-                if st.button("💾 រក្សាទុកការកែ", use_container_width=True):
-                    st.session_state.data = edited_df.to_dict('records'); st.success("Saved!")
-            with c_s2:
-                if st.button("📥 Download EN SRT", use_container_width=True):
-                    st.download_button("ចុចទីនេះ", create_srt_download(st.session_state.data, "English").encode('utf-8-sig'), "en.srt")
-            with c_s3:
-                if st.button("📥 Download KH SRT", use_container_width=True):
-                    st.download_button("ចុចទីនេះ", create_srt_download(st.session_state.data, "Khmer_Text").encode('utf-8-sig'), "kh.srt")
+            with tab_process:
+                if st.button("🚀 START DUBBING", type="primary"):
+                    stat, pb = st.empty(), st.progress(0)
+                    res = asyncio.run(process_audio(st.session_state.data, speed, stat, pb))
+                    if bgm:
+                        back = AudioSegment.from_file(bgm) - (60 - (vol * 0.6))
+                        res = res.overlay(back * (int(len(res)/len(back)) + 1))
+                    res.export("final.mp3", format="mp3")
+                    with open("final.mp3", "rb") as f: st.session_state.final_voice = f.read()
+                    st.success("រួចរាល់!")
+                if st.session_state.get('final_voice'):
+                    st.audio(st.session_state.final_voice)
+                    st.download_button("📥 ទាញយក MP3", st.session_state.final_voice, "dub_final.mp3")
 
-        with tab_setting:
-            speed = st.slider("ល្បឿន (%)", -50, 50, 0)
-            bgm = st.file_uploader("BGM", type=["mp3"])
-            vol = st.slider("កម្រិតសម្លេង BGM", 0, 100, 20)
-        
-        with tab_process:
-            if st.button("🚀 START DUBBING", type="primary"):
-                stat, pb = st.empty(), st.progress(0)
-                res = asyncio.run(process_audio(st.session_state.data, speed, stat, pb))
-                if bgm:
-                    back = AudioSegment.from_file(bgm) - (60 - (vol * 0.6))
-                    res = res.overlay(back * (int(len(res)/len(back)) + 1))
-                res.export("final.mp3", format="mp3")
-                with open("final.mp3", "rb") as f: st.session_state.final_voice = f.read()
-                st.success("រួចរាល់!")
-            if st.session_state.get('final_voice'):
-                st.audio(st.session_state.final_voice)
-                st.download_button("📥 ទាញយក MP3", st.session_state.final_voice, "dub_final.mp3")
-
-    st.divider()
-    if st.button("⬅️ ត្រលប់ក្រោយ"):
-        st.session_state.current_step = "Transcribe"
-        st.rerun()
+        st.divider()
+        if st.button("⬅️ ត្រលប់ក្រោយ"):
+            st.session_state.current_step = 0
+            st.rerun()
