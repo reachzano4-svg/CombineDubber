@@ -167,26 +167,52 @@ else:
         tab_edit, tab_setting, tab_process = st.tabs(["📝 កែអត្ថបទ", "⚙️ កំណត់សម្លេង", "🎵 ផលិត MP3"])
         
         with tab_edit:
-            # កន្លែងនេះហើយដែលបងអាចរើស ស្រី/ប្រុស ម្នាក់ៗបាន
+            # ១. តារាងសម្រាប់កែ និង Tick ជ្រើសរើសជួរ
             edited_df = st.data_editor(df, use_container_width=True, hide_index=True,
                 column_config={
-                    "Select": st.column_config.CheckboxColumn("✔"),
+                    "Select": st.column_config.CheckboxColumn("រើសជួរ", default=False),
                     "English": st.column_config.TextColumn("EN (ដើម)", disabled=True),
                     "Khmer_Text": st.column_config.TextColumn("KH (កែសម្រួល)", width="large"),
-                    "Voice": st.column_config.SelectboxColumn("ភេទសម្លេង", options=["Male", "Female"], default="Male"),
+                    "Voice": st.column_config.SelectboxColumn("ភេទសម្លេង", options=["Male", "Female"]),
                     "ID":None, "Start":None, "End":None
                 })
-            if st.button("💾 រក្សាទុកការកែ (Save)"):
-                st.session_state.data = edited_df.to_dict('records'); st.success("រក្សាទុកជោគជ័យ!")
             
-            # ប៊ូតុងផ្លាស់ប្តូរភេទទាំងអស់ក្នុងពេលតែមួយ
-            c1, c2 = st.columns(2)
-            with c1:
-                if st.button("👩‍🦰 ដូរទៅស្រីទាំងអស់"):
+            # រក្សាទុកទិន្នន័យដែលកែក្នុងតារាងសិន
+            if st.button("💾 រក្សាទុកការកែអត្ថបទ (Save Text)"):
+                st.session_state.data = edited_df.to_dict('records')
+                st.success("រក្សាទុកជោគជ័យ!")
+                st.rerun()
+
+            st.divider()
+            st.markdown("### 🛠️ បញ្ជាលឿន (Quick Actions)")
+            st.info("💡 គន្លឹះ៖ ចុច Tick ក្នុងប្រអប់ 'រើសជួរ' ខាងលើ រួចចុចប៊ូតុងខាងក្រោមដើម្បីដូរភេទសម្លេងជារួម")
+            
+            col1, col2, col3, col4 = st.columns(4)
+            
+            with col1:
+                if st.button("👩‍🦰 ដូរជួរដែលរើស -> ស្រី"):
+                    for item in st.session_state.data:
+                        # ឆែកមើលជួរណាដែលបងបាន Tick Select ក្នុង dataframe
+                        idx = item['ID']
+                        if edited_df.loc[edited_df['ID'] == idx, 'Select'].values[0]:
+                            item['Voice'] = "Female"
+                    st.rerun()
+            
+            with col2:
+                if st.button("👨‍🦱 ដូរជួរដែលរើស -> ប្រុស"):
+                    for item in st.session_state.data:
+                        idx = item['ID']
+                        if edited_df.loc[edited_df['ID'] == idx, 'Select'].values[0]:
+                            item['Voice'] = "Male"
+                    st.rerun()
+            
+            with col3:
+                if st.button("🌸 ស្រីទាំងអស់"):
                     for item in st.session_state.data: item['Voice'] = "Female"
                     st.rerun()
-            with c2:
-                if st.button("👨‍🦱 ដូរទៅប្រុសទាំងអស់"):
+            
+            with col4:
+                if st.button("💎 ប្រុសទាំងអស់"):
                     for item in st.session_state.data: item['Voice'] = "Male"
                     st.rerun()
 
