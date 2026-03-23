@@ -56,14 +56,18 @@ def simplify_khmer(text):
     for p, r in replaces.items(): text = re.sub(p, r, text)
     return text.strip()
 
-def create_srt_content(data, lang_key):
-    srt_content = ""
+# កែសម្រួលថ្មី៖ ផលិត SRT ឱ្យ CapCut ស្គាល់ (UTF-8)
+def create_srt_download(data, lang_key):
+    subs = []
     for i, row in enumerate(data):
-        start = format_time(row['Start'].total_seconds())
-        end = format_time(row['End'].total_seconds())
-        text = row[lang_key]
-        srt_content += f"{i+1}\n{start} --> {end}\n{text}\n\n"
-    return srt_content
+        subs.append(srt.Subtitle(
+            index=i + 1,
+            start=row['Start'],
+            end=row['End'],
+            content=row[lang_key]
+        ))
+    # ប្រើ srt.compose ដើម្បីឱ្យទម្រង់ Timecode ត្រឹមត្រូវបំផុត
+    return srt.compose(subs)
 
 async def process_audio(data, base_speed, status, progress):
     combined = AudioSegment.silent(duration=0)
@@ -165,7 +169,6 @@ else:
 
             st.divider()
             st.markdown("### 🛠️ បញ្ជាលឿន (Quick Actions)")
-            
             c1, c2, c3 = st.columns(3)
             with c1:
                 if st.button("🌸 ស្រីទាំងអស់"):
@@ -180,33 +183,33 @@ else:
                     st.session_state.data = edited_df.to_dict('records')
                     st.success("រក្សាទុកជោគជ័យ!")
 
+            # --- ប៊ូតុងទាញយក SRT សម្រាប់ CapCut ---
+            st.divider()
+            st.markdown("### 📄 ទាញយក Subtitle (សម្រាប់ CapCut)")
+            cs1, cs2 = st.columns(2)
+            with cs1:
+                en_srt = create_srt_download(st.session_state.data, "English")
+                st.download_button("📥 Download English SRT", en_srt, "sub_en.srt", mime="text/plain")
+            with cs2:
+                km_srt = create_srt_download(st.session_state.data, "Khmer_Text")
+                st.download_button("📥 Download Khmer SRT", km_srt, "sub_kh.srt", mime="text/plain")
+
             st.write("👉 **ដូរតាមការ Tick រើសជួរ:**")
             c4, c5, c6 = st.columns(3)
             with c4:
-                if st.button("👩‍🦰 ដូរជួរដែល Tick -> ស្រី"):
+                if st.button("👩‍🦰 Tick -> ស្រី"):
                     for item in st.session_state.data:
                         idx = item['ID']
                         if edited_df.loc[edited_df['ID'] == idx, 'Select'].values[0]: item['Voice'] = "Female"
                     st.rerun()
             with c5:
-                if st.button("👨‍🦱 ដូរជួរដែល Tick -> ប្រុស"):
+                if st.button("👨‍🦱 Tick -> ប្រុស"):
                     for item in st.session_state.data:
                         idx = item['ID']
                         if edited_df.loc[edited_df['ID'] == idx, 'Select'].values[0]: item['Voice'] = "Male"
                     st.rerun()
             with c6:
-                if st.button("🔴 Reset ថ្មី"): st.session_state.data = None; st.rerun()
-
-            # --- ប៊ូតុងថ្មី៖ ទាញយក SRT ---
-            st.divider()
-            st.markdown("### 📄 ទាញយក Subtitle (SRT)")
-            cs1, cs2 = st.columns(2)
-            with cs1:
-                en_srt = create_srt_content(st.session_state.data, "English")
-                st.download_button("📥 Download English SRT", en_srt, "subtitle_en.srt")
-            with cs2:
-                km_srt = create_srt_content(st.session_state.data, "Khmer_Text")
-                st.download_button("📥 Download Khmer SRT", km_srt, "subtitle_kh.srt")
+                if st.button("🔴 Reset"): st.session_state.data = None; st.rerun()
 
         with tab_setting:
             speed = st.slider("ល្បឿនសម្លេងមេ (%)", -50, 50, 0)
