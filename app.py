@@ -111,12 +111,26 @@ if st.sidebar.button("🔴 Logout"):
 # --- ៥. ទំព័រទី ១: TRANSCRIBE ---
 if page == "1. Transcribe (Video -> SRT)":
     st.header("🎙️ Step 1: បំប្លែងវីដេអូទៅជាអក្សរ (SRT)")
+
+    # កំណត់ផ្ទុកទិន្នន័យក្នុង Session បើមិនទាន់មាន
+    if 'generated_srt' not in st.session_state:
+        st.session_state.generated_srt = ""
+
     video_file = st.file_uploader("Upload Video/Audio", type=["mp4", "mp3", "m4a", "wav"])
     
-    if video_file:
-        if st.button("🚀 ចាប់ផ្តើមស្ដាប់ និងបំប្លែង", type="primary"):
-            with st.spinner("AI កំពុងស្ដាប់... សូមរង់ចាំ"):
-                with open("temp_v.mp4", "wb") as f: f.write(video_file.getbuffer())
+    col_btn1, col_btn2 = st.columns([1, 4])
+    with col_btn1:
+        start_transcribe = st.button("🚀 ចាប់ផ្តើមបំប្លែង", type="primary")
+    with col_btn2:
+        if st.button("🗑️ លុបទិន្នន័យចោល (Clear)"):
+            st.session_state.generated_srt = ""
+            st.rerun()
+
+    if video_file and start_transcribe:
+        with st.spinner("AI កំពុងស្ដាប់... សូមរង់ចាំ (កុំបិទទំព័រនេះ)"):
+            try:
+                with open("temp_v.mp4", "wb") as f: 
+                    f.write(video_file.getbuffer())
                 model = whisper.load_model("base")
                 result = model.transcribe("temp_v.mp4")
                 
@@ -124,9 +138,16 @@ if page == "1. Transcribe (Video -> SRT)":
                 for i, seg in enumerate(result['segments']):
                     srt_final += f"{i+1}\n{format_time(seg['start'])} --> {format_time(seg['end'])}\n{seg['text'].strip()}\n\n"
                 
-                st.session_state.generated_srt = srt_final # រក្សាទុកសម្រាប់ទំព័រទី២
-                st.success("✅ បំប្លែងរួចរាល់! សូមចុចទៅកាន់ទំព័រ Dubbing នៅ Sidebar ខាងឆ្វេង។")
-                st.text_area("លទ្ធផល SRT:", srt_final, height=300)
+                st.session_state.generated_srt = srt_final 
+                st.success("✅ បំប្លែងរួចរាល់!")
+            except Exception as e:
+                st.error(f"កំហុសបច្ចេកទេស: {e}")
+
+    # បង្ហាញលទ្ធផលឱ្យនៅជាប់រហូត (ទោះប្តូរទំព័រចុះឡើង)
+    if st.session_state.generated_srt:
+        st.divider()
+        st.subheader("📄 លទ្ធផលដែលបានរក្សាទុក៖")
+        st.text_area("SRT Content:", st.session_state.generated_srt, height=300)
 
 # --- ៦. ទំព័រទី ២: DUBBING ---
 elif page == "2. Dubbing (SRT -> Audio)":
