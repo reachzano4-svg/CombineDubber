@@ -58,6 +58,8 @@ def localize_khmer(text):
     for p, r in slang_map.items(): text = re.sub(p, r, text)
     return text.strip()
 
+from pydub.effects import speedup # បន្ថែមការ import នេះនៅខាងលើគេ
+
 async def process_audio(data, base_speed, status, progress):
     combined = AudioSegment.silent(duration=0)
     current_ms = 0
@@ -67,44 +69,36 @@ async def process_audio(data, base_speed, status, progress):
         status.write(f"🎙️ កំពុងផលិតឃ្លាទី {i+1}...")
         
         text = str(row['Khmer_Text']).strip()
-        # បំប្លែង Start/End ឱ្យទៅជា Milliseconds ឱ្យបានច្បាស់លាស់
         start_ms = int(row['Start'].total_seconds() * 1000)
         end_ms = int(row['End'].total_seconds() * 1000)
         duration_srt = end_ms - start_ms 
         
-        # ១. បញ្ចូលភាពស្ងាត់ (Silence) ដើម្បីឱ្យ Sync តាមម៉ោងចាប់ផ្ដើម
+        # ១. បន្ថែមចន្លោះស្ងាត់ឱ្យបានសុក្រិតបំផុត
         if start_ms > current_ms:
-            silence_gap = start_ms - current_ms
-            combined += AudioSegment.silent(duration=silence_gap)
+            combined += AudioSegment.silent(duration=start_ms - current_ms)
             current_ms = start_ms
 
-        # ២. ផលិតសម្លេងពី AI (Edge-TTS)
+        # ២. ផលិតសម្លេងពី AI
         voice = "km-KH-SreymomNeural" if row['Voice'] == "Female" else "km-KH-PisethNeural"
         tmp_file = f"temp_{i}.mp3"
-        
-        # ប្រើ Rate ដែលអ្នកប្រើកំណត់ជាមូលដ្ឋាន
         await edge_tts.Communicate(text, voice, rate=f"{base_speed:+}%").save(tmp_file)
         
         if os.path.exists(tmp_file):
             seg = AudioSegment.from_file(tmp_file)
-            duration_voice = len(seg)
             
-            # ៣. បើលទ្ធផលសម្លេងវែងជាងនាទីក្នុង SRT យើងនឹងមួលឱ្យលឿន
-            if duration_voice > duration_srt and duration_srt > 0:
-                speed_factor = duration_voice / duration_srt
-                # កំណត់ល្បឿនអតិបរមា ២ដង ដើម្បីការពារការបែកសម្លេង
-                final_speed = min(speed_factor, 2.0)
-                
-                # បច្ចេកទេសប្តូរល្បឿនដោយមិនប្រើ speed_up (ដើម្បីជៀសវាង AttributeError)
-                new_sample_rate = int(seg.frame_rate * final_speed)
-                seg = seg._spawn(seg.raw_data, overrides={'frame_rate': new_sample_rate})
-                seg = seg.set_frame_rate(44100) # កំណត់មកកម្រិតស្ដង់ដារវិញ
+            # ៣. មួលល្បឿនដោយមិនឱ្យប្តូរ Pitch (សម្លេងមិនតូច)
+            if len(seg) > duration_srt and duration_srt > 0:
+                ratio = len(seg) / duration_srt
+                # ប្រើ speedup ដើម្បីឱ្យសម្លេងនៅដដែល គ្រាន់តែនិយាយលឿន
+                # chunk_size=150 ជួយឱ្យសម្លេងមិនសូវរ៉ែ
+                seg = speedup(seg, playback_speed=min(ratio, 2.0), chunk_size=150, crossfade=25)
             
-            # ៤. បញ្ចូលសម្លេងចូលក្នុងទិន្នន័យរួម
+            # ៤. កាត់សម្លេងដែលលើសបន្តិចបន្តួចចេញ ដើម្បីកុំឱ្យជាន់គ្នា ១០០%
+            seg = seg[:duration_srt]
+            
             combined += seg
             current_ms += len(seg)
             
-            # លុប File បណ្ដោះអាសន្ន
             try:
                 os.remove(tmp_file)
             except:
