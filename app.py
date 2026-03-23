@@ -58,51 +58,45 @@ def localize_khmer(text):
     for p, r in slang_map.items(): text = re.sub(p, r, text)
     return text.strip()
 
-from pydub.effects import speedup # បន្ថែមការ import នេះនៅខាងលើគេ
-
 async def process_audio(data, base_speed, status, progress):
     combined = AudioSegment.silent(duration=0)
     current_ms = 0
     
     for i, row in enumerate(data):
         progress.progress((i + 1) / len(data))
-        status.write(f"🎙️ កំពុងផលិតឃ្លាទី {i+1}...")
+        status.write(f"🎙️ ផលិតឃ្លាទី {i+1}...")
         
         text = str(row['Khmer_Text']).strip()
-        start_ms = int(row['Start'].total_seconds() * 1000)
-        end_ms = int(row['End'].total_seconds() * 1000)
+        start_ms = row['Start'].total_seconds() * 1000
+        end_ms = row['End'].total_seconds() * 1000
         duration_srt = end_ms - start_ms 
         
-        # ១. បន្ថែមចន្លោះស្ងាត់ឱ្យបានសុក្រិតបំផុត
+        # ១. បញ្ចូលភាពស្ងាត់មុនឃ្លានីមួយៗ ដើម្បីឱ្យ Sync តាមម៉ោង
         if start_ms > current_ms:
             combined += AudioSegment.silent(duration=start_ms - current_ms)
             current_ms = start_ms
 
-        # ២. ផលិតសម្លេងពី AI
+        # ២. កំណត់សម្លេង (ស្រី/ប្រុស)
         voice = "km-KH-SreymomNeural" if row['Voice'] == "Female" else "km-KH-PisethNeural"
         tmp_file = f"temp_{i}.mp3"
+        
+        # ប្រើល្បឿនមូលដ្ឋានដែលអ្នកប្រើកំណត់
         await edge_tts.Communicate(text, voice, rate=f"{base_speed:+}%").save(tmp_file)
         
         if os.path.exists(tmp_file):
             seg = AudioSegment.from_file(tmp_file)
             
-            # ៣. មួលល្បឿនដោយមិនឱ្យប្តូរ Pitch (សម្លេងមិនតូច)
+            # ៣. ពិនិត្យមើលថាបើអានលើសម៉ោង SRT យើងនឹងមួលឱ្យលឿន (Speed Up)
             if len(seg) > duration_srt and duration_srt > 0:
-                ratio = len(seg) / duration_srt
-                # ប្រើ speedup ដើម្បីឱ្យសម្លេងនៅដដែល គ្រាន់តែនិយាយលឿន
-                # chunk_size=150 ជួយឱ្យសម្លេងមិនសូវរ៉ែ
-                seg = speedup(seg, playback_speed=min(ratio, 2.0), chunk_size=150, crossfade=25)
+                speed_factor = len(seg) / duration_srt
+                # កំណត់ល្បឿនអតិបរមា ២ដង ដើម្បីកុំឱ្យបែកសម្លេង
+                if speed_factor > 1.0:
+                    seg = seg.speed_up(playback_speed=min(speed_factor, 2.0))
             
-            # ៤. កាត់សម្លេងដែលលើសបន្តិចបន្តួចចេញ ដើម្បីកុំឱ្យជាន់គ្នា ១០០%
-            seg = seg[:duration_srt]
-            
+            # ៤. បន្ថែមសម្លេងចូល
             combined += seg
             current_ms += len(seg)
-            
-            try:
-                os.remove(tmp_file)
-            except:
-                pass
+            os.remove(tmp_file)
             
     return combined
 
