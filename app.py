@@ -48,7 +48,6 @@ def format_time(seconds):
 
 def simplify_khmer(text):
     if not text: return ""
-    # សម្រួលពាក្យដែលបកមកវែងៗ ឱ្យទៅជាភាសានិយាយខ្លីៗ
     replaces = {
         "តើ(.*)មែនទេ": r"\1មែនអត់?",
         "របស់អ្នក": "ឯង",
@@ -79,6 +78,7 @@ async def process_audio(data, base_speed, status, progress):
             combined += AudioSegment.silent(duration=start_ms - current_ms)
             current_ms = start_ms
 
+        # ឆែកមើលភេទសម្លេងដែលបងបានរើសក្នុងតារាង
         voice = "km-KH-SreymomNeural" if row['Voice'] == "Female" else "km-KH-PisethNeural"
         tmp_file = f"temp_{i}.mp3"
         await edge_tts.Communicate(text, voice, rate=f"{base_speed:+}%").save(tmp_file)
@@ -87,10 +87,8 @@ async def process_audio(data, base_speed, status, progress):
             seg = AudioSegment.from_file(tmp_file)
             duration_voice = len(seg)
             
-            # បើលើសនាទី Subtitle បន្តិចបន្តួច (ក្រោម 500ms) ទុកឱ្យវាអានធម្មតាឱ្យចប់កុំឱ្យញាប់
             if duration_voice > (duration_srt + 500):
                 ratio = duration_voice / duration_srt
-                # មួលល្បឿនឱ្យលឿនបន្តិច តែមិនឱ្យប្តូរ Pitch
                 seg = speedup(seg, playback_speed=min(ratio, 1.4), chunk_size=150, crossfade=25)
             
             combined += seg
@@ -106,7 +104,7 @@ if st.sidebar.button("🚪 Logout"):
     st.session_state.logged_in = False
     st.rerun()
 
-# --- ៥. ទំព័រទី ១: TRANSCRIBE (Smart Merging) ---
+# --- ៥. ទំព័រទី ១: TRANSCRIBE ---
 if menu == "បំប្លែងវីដេអូ (Transcribe)":
     st.title("🎙️ Step 1: Video to SRT")
     if 'generated_srt' not in st.session_state: st.session_state.generated_srt = ""
@@ -115,18 +113,17 @@ if menu == "បំប្លែងវីដេអូ (Transcribe)":
     
     if st.button("🚀 ចាប់ផ្ដើមបំប្លែង", type="primary"):
         if video_file:
-            with st.spinner("កំពុងស្តាប់ និងបញ្ចូលឃ្លាឱ្យវែងសមស្រប..."):
+            with st.spinner("កំពុងស្តាប់ និងរៀបចំឃ្លា..."):
                 with open("temp.mp4", "wb") as f: f.write(video_file.getbuffer())
                 model = whisper.load_model("base")
                 res = model.transcribe("temp.mp4")
                 
-                # បញ្ចូលឃ្លាខ្លីៗឱ្យទៅជាវែង ដើម្បីកុំឱ្យ AI និយាយញាប់ពេក
                 segments = res['segments']
                 merged = []
                 if segments:
                     curr = segments[0]
                     for next_seg in segments[1:]:
-                        if (curr['end'] - curr['start']) < 2.5: # បើខ្លីជាង 2.5 វិនាទី ឱ្យបូកបញ្ចូលគ្នា
+                        if (curr['end'] - curr['start']) < 2.5:
                             curr['end'] = next_seg['end']
                             curr['text'] += " " + next_seg['text']
                         else:
@@ -142,7 +139,7 @@ if menu == "បំប្លែងវីដេអូ (Transcribe)":
 
     if st.session_state.generated_srt:
         st.text_area("លទ្ធផល SRT", st.session_state.generated_srt, height=300)
-        if st.button("🗑️ លុបទិន្នន័យ (Clear)"):
+        if st.button("🗑️ Clear"):
             st.session_state.generated_srt = ""; st.rerun()
 
 # --- ៦. ទំព័រទី ២: DUBBING ---
@@ -159,7 +156,8 @@ else:
             for i, s in enumerate(subs):
                 p.write(f"កំពុងបកប្រែឃ្លាទី {i+1}...")
                 en = tr_en.translate(s.content)
-                km = simplify_khmer(tr_km.translate(en)) # ប្រើមុខងារសម្រួលឱ្យខ្លី
+                km = simplify_khmer(tr_km.translate(en))
+                # កន្លែងនេះ Default យក Male ឱ្យបងសិន
                 data.append({"ID": i, "Select": False, "English": en, "Khmer_Text": km, "Voice": "Male", "Start": s.start, "End": s.end})
             st.session_state.data = data
             st.rerun()
@@ -169,16 +167,28 @@ else:
         tab_edit, tab_setting, tab_process = st.tabs(["📝 កែអត្ថបទ", "⚙️ កំណត់សម្លេង", "🎵 ផលិត MP3"])
         
         with tab_edit:
+            # កន្លែងនេះហើយដែលបងអាចរើស ស្រី/ប្រុស ម្នាក់ៗបាន
             edited_df = st.data_editor(df, use_container_width=True, hide_index=True,
                 column_config={
                     "Select": st.column_config.CheckboxColumn("✔"),
-                    "English": st.column_config.TextColumn("EN", disabled=True),
+                    "English": st.column_config.TextColumn("EN (ដើម)", disabled=True),
                     "Khmer_Text": st.column_config.TextColumn("KH (កែសម្រួល)", width="large"),
-                    "Voice": st.column_config.SelectboxColumn("ភេទ", options=["Male", "Female"]),
+                    "Voice": st.column_config.SelectboxColumn("ភេទសម្លេង", options=["Male", "Female"], default="Male"),
                     "ID":None, "Start":None, "End":None
                 })
             if st.button("💾 រក្សាទុកការកែ (Save)"):
                 st.session_state.data = edited_df.to_dict('records'); st.success("រក្សាទុកជោគជ័យ!")
+            
+            # ប៊ូតុងផ្លាស់ប្តូរភេទទាំងអស់ក្នុងពេលតែមួយ
+            c1, c2 = st.columns(2)
+            with c1:
+                if st.button("👩‍🦰 ដូរទៅស្រីទាំងអស់"):
+                    for item in st.session_state.data: item['Voice'] = "Female"
+                    st.rerun()
+            with c2:
+                if st.button("👨‍🦱 ដូរទៅប្រុសទាំងអស់"):
+                    for item in st.session_state.data: item['Voice'] = "Male"
+                    st.rerun()
 
         with tab_setting:
             speed = st.slider("ល្បឿនសម្លេងមេ (%)", -50, 50, 0)
@@ -186,7 +196,7 @@ else:
             bgm_vol = st.slider("កម្រិតសម្លេង BGM", 0, 100, 20)
 
         with tab_process:
-            if st.button("🚀 ចាប់ផ្ដើមផលិត (START)", type="primary"):
+            if st.button("🚀 START DUBBING", type="primary"):
                 stat = st.empty(); pb = st.progress(0)
                 res_audio = asyncio.run(process_audio(st.session_state.data, speed, stat, pb))
                 if bgm_file:
