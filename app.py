@@ -59,40 +59,34 @@ async def process_audio(data, base_speed, status, progress):
     
     for i, row in enumerate(data):
         progress.progress((i + 1) / len(data))
-        status.write(f"🎙️ កំពុងផលិតឃ្លាទី {i+1}...")
+        status.write(f"🎙️ ផលិតឃ្លាទី {i+1}...")
         
         text = str(row['Khmer_Text']).strip()
         start_ms = int(row['Start'].total_seconds() * 1000)
         end_ms = int(row['End'].total_seconds() * 1000)
         duration_srt = end_ms - start_ms 
         
-        # ១. បន្ថែមចន្លោះស្ងាត់ឱ្យបានសុក្រិតបំផុតតាមពេលវេលាចាប់ផ្ដើម
         if start_ms > current_ms:
             combined += AudioSegment.silent(duration=start_ms - current_ms)
             current_ms = start_ms
 
-        # ២. ផលិតសម្លេងពី AI
         voice = "km-KH-SreymomNeural" if row['Voice'] == "Female" else "km-KH-PisethNeural"
         tmp_file = f"temp_{i}.mp3"
         await edge_tts.Communicate(text, voice, rate=f"{base_speed:+}%").save(tmp_file)
         
         if os.path.exists(tmp_file):
             seg = AudioSegment.from_file(tmp_file)
+            duration_voice = len(seg)
             
-            # ៣. មួលល្បឿនដោយមិនឱ្យប្តូរ Pitch (សម្លេងមិនតូច) ប្រសិនបើសម្លេងវែងជាង Subtitle
-            if len(seg) > duration_srt and duration_srt > 0:
-                ratio = len(seg) / duration_srt
-                # ប្រើ speedup ឱ្យបានត្រឹមត្រូវដើម្បីកុំឱ្យ Error
-                seg = speedup(seg, playback_speed=min(ratio, 2.0), chunk_size=150, crossfade=25)
+            # បើលើសនាទី Subtitle តិចតួច (ក្រោម 800ms) មិនបាច់មួលសម្លេងឱ្យលឿនទេ 
+            # ទុកឱ្យវាអានធម្មតាដើម្បីឱ្យពិរោះ តែបើលើសខ្លាំងទើបមួលល្បឿន
+            if duration_voice > (duration_srt + 800):
+                ratio = duration_voice / duration_srt
+                seg = speedup(seg, playback_speed=min(ratio, 1.5), chunk_size=150, crossfade=25)
             
-            # ៤. បង្ខំឱ្យបញ្ចប់ត្រឹមនាទីដែលកំណត់ (Sync 100%)
-            seg = seg[:duration_srt]
             combined += seg
             current_ms += len(seg)
-            
-            try:
-                os.remove(tmp_file)
-            except: pass
+            os.remove(tmp_file)
             
     return combined
 
