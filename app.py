@@ -56,7 +56,6 @@ def simplify_khmer(text):
     for p, r in replaces.items(): text = re.sub(p, r, text)
     return text.strip()
 
-# មុខងារផលិត SRT ឱ្យ CapCut ស្គាល់អក្សរខ្មែរច្បាស់ (UTF-8 with BOM)
 def create_srt_download(data, lang_key):
     subs = []
     for i, row in enumerate(data):
@@ -183,7 +182,7 @@ else:
                     st.session_state.data = edited_df.to_dict('records')
                     st.success("រក្សាទុកជោគជ័យ!")
 
-            # --- ប៊ូតុងបញ្ជាតាមការ Tick ---
+            # --- បញ្ជាតាមការ Tick ---
             st.write("👉 **ដូរតាមការ Tick រើសជួរ:**")
             c4, c5, c6 = st.columns(3)
             with c4:
@@ -201,16 +200,16 @@ else:
             with c6:
                 if st.button("🔴 Reset"): st.session_state.data = None; st.rerun()
 
-            # --- ផ្នែក Download SRT (កែសម្រួល Encoding សម្រាប់ CapCut) ---
+            # --- ផ្នែក Download SRT (កែសម្រួលឱ្យដូចគ្នាទាំង EN និង KH) ---
             st.divider()
             st.markdown("### 📄 ទាញយក Subtitle (សម្រាប់ CapCut)")
             cs1, cs2 = st.columns(2)
             with cs1:
                 en_srt = create_srt_download(st.session_state.data, "English")
+                # បន្ថែម .encode('utf-8-sig') ឱ្យដូចភាសាខ្មែរដែរ
                 st.download_button("📥 Download English SRT", en_srt.encode('utf-8-sig'), "sub_en.srt", mime="text/plain")
             with cs2:
                 km_srt = create_srt_download(st.session_state.data, "Khmer_Text")
-                # ប្រើ .encode('utf-8-sig') ដើម្បីឱ្យ CapCut មើលឃើញខ្មែរ មិនមែនចិន
                 st.download_button("📥 Download Khmer SRT", km_srt.encode('utf-8-sig'), "sub_kh.srt", mime="text/plain")
 
         with tab_setting:
