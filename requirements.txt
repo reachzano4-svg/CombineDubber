@@ -1,8 +1,7 @@
-streamlit
 google-generativeai
-audioop-lts
 edge-tts
 srt
 pydub
 pandas
 streamlit-javascript
+audioop-lts
