@@ -41,13 +41,14 @@ st.markdown("""
     }
     section[data-testid="stSidebar"] { background-color: #000000; border-right: 1px solid #D4AF37; }
     div[data-testid="stExpander"] { border: 1px solid #D4AF37 !important; border-radius: 10px; }
+    /* Table styling */
+    .stDataEditor { border: 1px solid #444; }
     </style>
     """, unsafe_allow_html=True)
 
-# --- ២. Turbo Engine Loading (Cache) ---
+# --- ២. Turbo Engine Loading (Cache ទុកក្នុង RAM) ---
 @st.cache_resource
 def load_whisper_engine():
-    # ប្រើ tiny model ដើម្បីល្បឿនលឿនបំផុតសម្រាប់ Audio វែងៗ
     return whisper.load_model("tiny")
 
 # --- ៣. ប្រព័ន្ធ Login ---
@@ -65,7 +66,7 @@ def login_system():
     now_t = int(time.time())
     
     if act_val and str(u_val) == USER_NAME:
-        if (now_t - int(act_val)) < 1200: st.session_state.logged_in = True
+        if (now_t - int(act_val)) < 3600: st.session_state.logged_in = True
 
     if not st.session_state.logged_in:
         st.markdown("<h1 class='gold-text'>🎙️ REACH MAVERICK AI</h1>", unsafe_allow_html=True)
@@ -81,6 +82,9 @@ def login_system():
                     st.rerun()
                 else: st.error("លេខសម្ងាត់មិនត្រឹមត្រូវ!")
         st.stop()
+    else:
+        st_javascript(f"localStorage.setItem('last_active', '{now_t}');")
+
 login_system()
 
 # --- ៤. Helper Functions ---
@@ -113,7 +117,7 @@ with st.sidebar:
         st.session_state.logged_in = False
         st.rerun()
 
-# --- ៦. STEP 1: TRANSCRIBE (Ultra-Fast for 10mn+ Audio) ---
+# --- ៦. STEP 1: TRANSCRIBE (Ultra-Fast for 10mn+) ---
 if st.session_state.current_step == 0:
     st.markdown("<h2 class='gold-text'>🎙️ STEP 1: VIDEO TO SRT (TURBO)</h2>", unsafe_allow_html=True)
     with st.container(border=True):
@@ -123,13 +127,11 @@ if st.session_state.current_step == 0:
                 with open("temp_raw", "wb") as file: file.write(f.getbuffer())
                 start_t = time.time()
                 with st.spinner("⚡ កំពុងរៀបចំសម្លេង និងបំប្លែងយ៉ាងលឿន..."):
-                    # ដកយកតែសម្លេងកម្រិតស្រាល ដើម្បីឱ្យ AI ស្ដាប់លឿនបំផុត
                     audio = AudioSegment.from_file("temp_raw")
                     audio = audio.set_frame_rate(16000).set_channels(1)
                     audio.export("temp_low.wav", format="wav")
                     
                     model = load_whisper_engine()
-                    # ប្រើ beam_size=1 ដើម្បីល្បឿនខ្លាំងបំផុត (ស័ក្តិសមសម្រាប់ Audio វែង)
                     res = model.transcribe("temp_low.wav", fp16=False, beam_size=1)
                 
                 srt_txt = ""
@@ -137,7 +139,6 @@ if st.session_state.current_step == 0:
                     srt_txt += f"{i+1}\n{format_time(s['start'])} --> {format_time(s['end'])}\n{s['text'].strip()}\n\n"
                 
                 st.session_state.generated_srt = srt_txt
-                # លុប File ចោលការពារពេញ Memory
                 for tmp in ["temp_raw", "temp_low.wav"]:
                     if os.path.exists(tmp): os.remove(tmp)
                 
@@ -149,7 +150,7 @@ if st.session_state.current_step == 0:
         if st.button("បន្តទៅ Step 2 ➡️"):
             st.session_state.current_step = 1; st.rerun()
 
-# --- ៧. STEP 2: DUBBING ---
+# --- ៧. STEP 2: DUBBING (Safe Audio Stitching) ---
 else:
     st.markdown("<h2 class='gold-text'>🎬 STEP 2: AI GOLD DUBBING</h2>", unsafe_allow_html=True)
     if not st.session_state.generated_srt:
@@ -189,23 +190,48 @@ else:
                 st.session_state.data = edit_df.to_dict('records')
                 async def run_now():
                     return await asyncio.gather(*[fetch_tts(r, i, spd_val) for i, r in enumerate(st.session_state.data)])
+                
                 with st.spinner("🎙️ កំពុងផលិតសម្លេងរលូន..."):
                     f_list = asyncio.run(run_now())
                     combined = AudioSegment.silent(duration=0)
                     curr_ms = 0
+                    
                     for i, r in enumerate(st.session_state.data):
                         s_ms, e_ms = int(r['Start'].total_seconds()*1000), int(r['End'].total_seconds()*1000)
-                        seg = AudioSegment.from_file(f_list[i]).strip_silence()
-                        d = max(1, e_ms - s_ms)
-                        if len(seg) > (d + 300): seg = speedup(seg, playback_speed=min(len(seg)/d, 1.4), chunk_size=150, crossfade=25)
-                        if s_ms > curr_ms: combined += AudioSegment.silent(duration=s_ms - curr_ms); combined += seg
-                        else: combined = combined.append(seg, crossfade=100)
-                        curr_ms = len(combined); os.remove(f_list[i])
+                        
+                        # ពិនិត្យមើលវត្តមាន File សម្លេង
+                        if os.path.exists(f_list[i]):
+                            seg = AudioSegment.from_file(f_list[i]).strip_silence()
+                            
+                            # បើ Audio ខ្លីពេក (ការពារ Error Crossfade)
+                            if len(seg) < 10:
+                                seg = AudioSegment.silent(duration=10)
+                                
+                            dur = max(1, e_ms - s_ms)
+                            if len(seg) > (dur + 300):
+                                seg = speedup(seg, playback_speed=min(len(seg)/dur, 1.4), chunk_size=150, crossfade=25)
+                            
+                            # សរសេរសម្លេងចូល Timeline (Safe Logic)
+                            if s_ms > curr_ms:
+                                combined += AudioSegment.silent(duration=s_ms - curr_ms)
+                                combined += seg
+                            else:
+                                # បើ combined វែងជាង 100ms ទើបអនុញ្ញាតឱ្យប្រើ Crossfade
+                                if len(combined) > 100:
+                                    combined = combined.append(seg, crossfade=100)
+                                else:
+                                    combined += seg
+                                    
+                            curr_ms = len(combined)
+                            os.remove(f_list[i])
+                    
                     if bgm:
                         b_seg = AudioSegment.from_file(bgm) - 25
                         combined = combined.overlay(b_seg * (int(len(combined)/len(b_seg)) + 1))
+                    
                     combined.export("final.mp3", format="mp3")
-                    with open("final.mp3", "rb") as file: st.session_state.audio_bytes = file.read()
+                    with open("final.mp3", "rb") as file: 
+                        st.session_state.audio_bytes = file.read()
                 st.balloons()
 
             if st.session_state.get('audio_bytes'):
