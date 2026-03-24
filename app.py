@@ -113,11 +113,21 @@ def format_time(seconds):
 # ប៉ុន្តែជាទូទៅ គ្រាន់តែ Update Library ក្នុង requirements.txt គឺដើរហើយបង។
 
 def gemini_refine_srt(raw_srt):
-    # ... (កូដផ្សេងៗនៅដដែល)
+    if not st.session_state.get('api_ready'):
+        return raw_srt
+    
     try:
-        # បងអាចសាកល្បងប្រើឈ្មោះពេញរបស់វាបែបនេះ
-        model = genai.GenerativeModel(model_name='gemini-1.5-flash') 
-        response = model.generate_content(prompt)
+        # ប្រើ model_name បែបនេះដើម្បីឱ្យវាស្គាល់ច្បាស់
+        model = genai.GenerativeModel(model_name='gemini-1.5-flash')
+        
+        response = model.generate_content(
+            prompt,
+            # បន្ថែម safety_settings ដើម្បីកុំឱ្យវាបដិសេធអត្ថបទរឿង
+            safety_settings=[
+                {"category": "HARM_CATEGORY_HARASSMENT", "threshold": "BLOCK_NONE"},
+                {"category": "HARM_CATEGORY_HATE_SPEECH", "threshold": "BLOCK_NONE"},
+            ]
+        )
         return response.text.strip()
     except Exception as e:
         st.error(f"❌ Gemini Error: {str(e)}")
