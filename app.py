@@ -109,9 +109,18 @@ def format_time(seconds):
     ms = int((td.total_seconds() - ts) * 1000)
     return f"{ts // 3600:02}:{(ts % 3600) // 60:02}:{ts % 60:02},{ms:03}"
 
+# ដូរពី 'gemini-1.5-flash' មកជា 'models/gemini-1.5-flash' វិញ (ប្រសិនបើនៅតែលោត 404)
+# ប៉ុន្តែជាទូទៅ គ្រាន់តែ Update Library ក្នុង requirements.txt គឺដើរហើយបង។
+
 def gemini_refine_srt(raw_srt):
-    if not st.session_state.get('api_ready'):
-        st.error("❌ API មិនទាន់រួចរាល់ ឬអស់ Token!")
+    # ... (កូដផ្សេងៗនៅដដែល)
+    try:
+        # បងអាចសាកល្បងប្រើឈ្មោះពេញរបស់វាបែបនេះ
+        model = genai.GenerativeModel(model_name='gemini-1.5-flash') 
+        response = model.generate_content(prompt)
+        return response.text.strip()
+    except Exception as e:
+        st.error(f"❌ Gemini Error: {str(e)}")
         return raw_srt
     
     prompt = f"""
