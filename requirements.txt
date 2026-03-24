@@ -1,6 +1,6 @@
 streamlit
 openai-whisper
-google-generativeai>=0.5.4
+google-generativeai>=0.7.2
 edge-tts
 srt
 pydub
