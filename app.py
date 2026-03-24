@@ -9,6 +9,7 @@ import streamlit as st
 import whisper
 import datetime
 import asyncio, edge_tts, srt, os, re, pandas as pd, time
+import google.generativeai as genai
 from pydub import AudioSegment
 from pydub.effects import speedup
 from deep_translator import GoogleTranslator
@@ -17,7 +18,7 @@ from streamlit_javascript import st_javascript
 # --- ១. កំណត់ Page Config ---
 st.set_page_config(page_title="Reach AI Pro", layout="wide", page_icon="🎙️")
 
-# --- ២. ប្រព័ន្ធ Login (ចងចាំ Password & Timeout 3mn) ---
+# --- ២. ប្រព័ន្ធ Login ---
 USER_NAME = "admin"
 USER_PASSWORD = "reachzano"
 
@@ -31,61 +32,70 @@ def login():
     if "logged_in" not in st.session_state:
         st.session_state.logged_in = False
 
-    # Check login automatically if data exists
-    if not st.session_state.logged_in and stored_user == USER_NAME and stored_pw == USER_PASSWORD:
-        if last_active and (current_time - int(last_active)) < timeout_seconds:
+    if last_active and stored_user == USER_NAME:
+        if (current_time - int(last_active)) <= timeout_seconds:
             st.session_state.logged_in = True
-
+    
     if not st.session_state.logged_in:
         st.markdown("<h2 style='text-align: center;'>🔐 ចូលប្រើប្រាស់ Reach AI</h2>", unsafe_allow_html=True)
         col1, col2, col3 = st.columns([1, 1.5, 1])
         with col2:
             user = st.text_input("Username", value=stored_user if stored_user else "")
             pw = st.text_input("Password", type="password", value=stored_pw if stored_pw else "")
-            remember = st.checkbox("ចងចាំលេខសម្ងាត់ (Remember Me)", value=True)
             if st.button("ចូលប្រើ", type="primary", use_container_width=True):
                 if user == USER_NAME and pw == USER_PASSWORD:
-                    st_javascript(f"localStorage.setItem('last_active', '{current_time}');")
-                    if remember:
-                        st_javascript(f"localStorage.setItem('reach_user', '{user}');")
-                        st_javascript(f"localStorage.setItem('reach_pw', '{pw}');")
                     st.session_state.logged_in = True
+                    st.session_state.current_step = 0
+                    st_javascript(f"localStorage.setItem('last_active', '{current_time}');")
+                    st_javascript(f"localStorage.setItem('reach_user', '{user}');")
+                    st_javascript(f"localStorage.setItem('reach_pw', '{pw}');")
                     st.rerun()
-                else:
-                    st.error("ខុសឈ្មោះ ឬលេខសម្ងាត់!")
+                else: st.error("ខុសឈ្មោះ ឬលេខសម្ងាត់!")
         st.stop()
     else:
         st_javascript(f"localStorage.setItem('last_active', '{current_time}');")
 
 login()
 
-# --- ៣. Helper Functions ---
+# --- ៣. Gemini API Configuration (Front-end Management) ---
+st.sidebar.markdown("### 🔑 API Configuration")
+api_key_input = st.sidebar.text_input("Gemini API Key", type="password", help="ប្តូរលេខថ្មីនៅទីនេះពេលអស់ Free Tier")
+if api_key_input:
+    genai.configure(api_key=api_key_input)
+    st.session_state.api_ready = True
+else:
+    st.sidebar.warning("⚠️ សូមបំពេញ Gemini API Key")
+    st.session_state.api_ready = False
+
+# --- ៤. Helper Functions ---
 def format_time(seconds):
     td = datetime.timedelta(seconds=seconds)
     total_sec = int(td.total_seconds())
     milis = int((td.total_seconds() - total_sec) * 1000)
     return f"{total_sec // 3600:02}:{(total_sec % 3600) // 60:02}:{total_sec % 60:02},{milis:03}"
 
-# មុខងារថ្មី៖ ហែកអត្ថបទតាមចំនួនពាក្យ (ដូច TurboScribe)
-def split_segments_by_words(segments, max_words):
-    new_segments = []
-    for seg in segments:
-        words = seg['text'].strip().split()
-        if len(words) <= max_words:
-            new_segments.append(seg)
-            continue
-        
-        total_dur = seg['end'] - seg['start']
-        for i in range(0, len(words), max_words):
-            chunk = words[i:i + max_words]
-            s_off = (i / len(words)) * total_dur
-            e_off = (min(i + max_words, len(words)) / len(words)) * total_dur
-            new_segments.append({
-                'start': seg['start'] + s_off,
-                'end': seg['start'] + e_off,
-                'text': " ".join(chunk)
-            })
-    return new_segments
+def gemini_refine_srt(raw_srt):
+    if not st.session_state.api_ready:
+        return raw_srt
+    
+    prompt = f"""
+    តួនាទី៖ អ្នកជំនាញ Dubbing រឿងភាគ។
+    ភារកិច្ច៖ សម្រួលអត្ថបទ SRT ខាងក្រោមឱ្យត្រូវសាច់រឿង ខ្លី ខ្លឹម និងងាយស្រួល Dubbing (ប្រហែល ៧-១០ ពាក្យក្នុងមួយឃ្លា)។
+    លក្ខខណ្ឌ៖
+    1. រក្សា Timecode (00:00:00,000) ដាច់ខាត។
+    2. លុបពាក្យដែលនិយាយស្ទួន ឬពាក្យ AI ស្ដាប់ច្រឡំ។
+    3. បើឃ្លាវែងពេក ត្រូវហែកជា ២ ឃ្លាដោយបែងចែកពេលវេលាឱ្យសមស្រប។
+    
+    អត្ថបទ SRT៖
+    {raw_srt}
+    """
+    try:
+        model = genai.GenerativeModel('gemini-1.5-flash')
+        response = model.generate_content(prompt)
+        return response.text.strip()
+    except Exception as e:
+        st.error(f"❌ Gemini API Error: ប្រហែលជាអស់ Token ឬ Key ខុស។ សូមដូរលេខថ្មី! (Error: {str(e)})")
+        return raw_srt
 
 def simplify_khmer(text):
     if not text: return ""
@@ -94,9 +104,7 @@ def simplify_khmer(text):
     return text.strip()
 
 def create_srt_download(data, lang_key):
-    subs = []
-    for i, row in enumerate(data):
-        subs.append(srt.Subtitle(index=i+1, start=row['Start'], end=row['End'], content=row[lang_key]))
+    subs = [srt.Subtitle(index=i+1, start=row['Start'], end=row['End'], content=row[lang_key]) for i, row in enumerate(data)]
     return srt.compose(subs)
 
 async def process_audio(data, base_speed, status, progress):
@@ -116,66 +124,54 @@ async def process_audio(data, base_speed, status, progress):
             seg = AudioSegment.from_file(tmp)
             if len(seg) > (end_ms - start_ms + 500):
                 seg = speedup(seg, playback_speed=min(len(seg)/(end_ms - start_ms), 1.4), chunk_size=150, crossfade=25)
-            combined += seg
-            current_ms += len(seg)
+            combined += seg; current_ms += len(seg)
             try: os.remove(tmp)
             except: pass
     return combined
 
-# --- ៤. Navigation Logic ---
-if 'current_step' not in st.session_state:
-    st.session_state.current_step = 0
-
-step_options = ["🏠 បំប្លែងវីដេអូ (Transcribe)", "🎧 បញ្ចូលសម្លេង (Dubbing)"]
+# --- ៥. Navigation Logic ---
+if 'current_step' not in st.session_state: st.session_state.current_step = 0
+step_options = ["បំប្លែងវីដេអូ (Transcribe)", "បញ្ចូលសម្លេង (Dubbing)"]
 selected_step = st.sidebar.radio("ជំហានការងារ", step_options, index=st.session_state.current_step)
-
-if selected_step == step_options[0]: st.session_state.current_step = 0
-else: st.session_state.current_step = 1
+st.session_state.current_step = 0 if selected_step == step_options[0] else 1
 
 if st.sidebar.button("🚪 Logout"):
-    st_javascript("localStorage.removeItem('last_active');")
+    st_javascript("localStorage.clear();")
     st.session_state.logged_in = False
     st.rerun()
 
-# --- ៥. STEP 0: TRANSCRIBE (Upgrade ល្បឿន និង Word Limit) ---
+# --- ៦. Step 0: TRANSCRIBE + Smart Gemini ---
 if st.session_state.current_step == 0:
-    st.title("🎙️ Step 1: Video to SRT")
+    st.title("🎙️ Step 1: Video to Smart SRT")
     if 'generated_srt' not in st.session_state: st.session_state.generated_srt = ""
     
-    video_file = st.file_uploader("ជ្រើសរើសវីដេអូ ឬសម្លេង", type=["mp4", "mp3", "mov", "m4a"])
+    video_file = st.file_uploader("ជ្រើសរើសវីដេអូ", type=["mp4", "mp3", "mov", "m4a"])
     
-    # settings ដូចក្នុងរូបភាពបងផ្ញើមក
-    st.markdown("### ⚙️ Settings")
-    max_words_input = st.number_input("Max Words Per Segment", min_value=1, max_value=30, value=8)
-
-    if st.button("🚀 TRANSCRIBE FILES", type="primary", use_container_width=True):
+    if st.button("🚀 ចាប់ផ្ដើមបំប្លែង (Smart Mode)", type="primary", use_container_width=True):
         if video_file:
-            with st.spinner("⚡ កំពុងបំប្លែងយ៉ាងរហ័ស..."):
+            with st.spinner("កំពុងបំប្លែង និងសម្រួលអត្ថបទដោយ Gemini..."):
                 with open("temp.mp4", "wb") as f: f.write(video_file.getbuffer())
                 
-                # ប្តូរប្រើ Tiny Model ដើម្បីល្បឿន
+                # Whisper Transcribe
                 model = whisper.load_model("tiny")
-                res = model.transcribe("temp.mp4", fp16=False)
+                res = model.transcribe("temp.mp4")
                 
-                # ហែកឃ្លាតាម Word Limit
-                raw_segments = res['segments']
-                final_segments = split_segments_by_words(raw_segments, max_words_input)
+                # បង្កើត Raw SRT
+                raw_srt = ""
+                for i, s in enumerate(res['segments']):
+                    raw_srt += f"{i+1}\n{format_time(s['start'])} --> {format_time(s['end'])}\n{s['text'].strip()}\n\n"
                 
-                srt_out = ""
-                for i, s in enumerate(final_segments):
-                    srt_out += f"{i+1}\n{format_time(s['start'])} --> {format_time(s['end'])}\n{s['text'].strip()}\n\n"
-                
-                st.session_state.generated_srt = srt_out
-                st.success("បំប្លែងរួចរាល់!")
-                if os.path.exists("temp.mp4"): os.remove("temp.mp4")
+                # ផ្ញើទៅ Gemini (បងអាចដូរ Key ក្នុង Sidebar បើវាអស់ Token)
+                refined_srt = gemini_refine_srt(raw_srt)
+                st.session_state.generated_srt = refined_srt
+                st.success("រួចរាល់!")
 
     if st.session_state.generated_srt:
-        st.text_area("លទ្ធផល SRT (បែងចែកតាមចំនួនពាក្យ)", st.session_state.generated_srt, height=250)
-        if st.button("បន្តទៅការបញ្ចូលសម្លេង ➡️", type="primary", use_container_width=True):
-            st.session_state.current_step = 1
-            st.rerun()
+        st.text_area("លទ្ធផល SRT ពី Gemini", st.session_state.generated_srt, height=250)
+        if st.button("បន្តទៅមុខ ➡️", type="primary", use_container_width=True):
+            st.session_state.current_step = 1; st.rerun()
 
-# --- ៦. STEP 1: DUBBING (រក្សាទុក Logic ដើមបងទាំងអស់) ---
+# --- ៧. Step 1: DUBBING (Logic ដើមបងទាំងអស់) ---
 else:
     st.title("🎬 Step 2: AI Dubbing")
     srt_input = st.session_state.get('generated_srt', "")
@@ -199,11 +195,9 @@ else:
         if st.session_state.get('data'):
             df = pd.DataFrame(st.session_state.data)
             tab_edit, tab_setting, tab_process = st.tabs(["📝 កែអត្ថបទ", "⚙️ កំណត់សម្លេង", "🎵 ផលិត MP3"])
-            
             with tab_edit:
                 edited_df = st.data_editor(df, use_container_width=True, hide_index=True,
-                    column_config={"Select": st.column_config.CheckboxColumn("រើស", default=False), "English": st.column_config.TextColumn("EN", disabled=True), "Khmer_Text": st.column_config.TextColumn("KH", width="large"), "Voice": st.column_config.SelectboxColumn("ភេទ", options=["Male", "Female"]), "ID":None, "Start":None, "End":None})
-                
+                    column_config={"Select": st.column_config.CheckboxColumn("រើស"), "Khmer_Text": st.column_config.TextColumn("KH", width="large"), "Voice": st.column_config.SelectboxColumn("ភេទ", options=["Male", "Female"]), "ID":None, "Start":None, "End":None})
                 if st.button("💾 រក្សាទុកការកែ"):
                     st.session_state.data = edited_df.to_dict('records'); st.success("Saved!")
 
@@ -211,7 +205,7 @@ else:
                 speed = st.slider("ល្បឿន (%)", -50, 50, 0)
                 bgm = st.file_uploader("BGM", type=["mp3"])
                 vol = st.slider("កម្រិតសម្លេង BGM", 0, 100, 20)
-            
+
             with tab_process:
                 if st.button("🚀 START DUBBING", type="primary", use_container_width=True):
                     stat, pb = st.empty(), st.progress(0)
@@ -222,11 +216,9 @@ else:
                     res.export("final.mp3", format="mp3")
                     with open("final.mp3", "rb") as f: st.session_state.final_voice = f.read()
                     st.success("រួចរាល់!")
-                
                 if st.session_state.get('final_voice'):
                     st.audio(st.session_state.final_voice)
-                    st.download_button("📥 ទាញយក MP3", st.session_state.final_voice, "reach_dub.mp3")
+                    st.download_button("📥 ទាញយក MP3", st.session_state.final_voice, "dub_final.mp3")
 
     if st.button("⬅️ ត្រលប់ក្រោយ"):
-        st.session_state.current_step = 0
-        st.rerun()
+        st.session_state.current_step = 0; st.rerun()
