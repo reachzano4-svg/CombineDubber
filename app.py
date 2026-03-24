@@ -1,8 +1,6 @@
 import os
 # បង្ខំឱ្យវាប្រើ pure-python parsing ដើម្បីដោះស្រាយ Error ក្នុងរូបភាពបង
 os.environ["PROTOCOL_BUFFERS_PYTHON_IMPLEMENTATION"] = "python"
-
-import sys
 # ... កូដផ្សេងទៀត ...import os
 import sys
 import time
