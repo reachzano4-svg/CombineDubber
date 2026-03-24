@@ -14,36 +14,27 @@ from pydub.effects import speedup
 from deep_translator import GoogleTranslator
 from streamlit_javascript import st_javascript
 
-# --- ១. កំណត់ Page Config & Custom CSS ---
-st.set_page_config(page_title="Reach Maverick AI Dubbing", layout="wide", page_icon="🎙️")
+# --- ១. កំណត់ Page Config & UI Style (ស្អាត និងស្រាលសម្រាប់ Mobile) ---
+st.set_page_config(page_title="Reach Maverick AI", layout="wide", page_icon="🎙️")
 
 st.markdown("""
     <style>
-    /* ច្នៃប៊ូតុងឱ្យស្អាត */
-    .stButton>button {
-        border-radius: 8px;
-        font-weight: 600;
-        transition: all 0.3s;
-    }
-    .stButton>button:hover {
-        transform: translateY(-2px);
-        box-shadow: 0 4px 12px rgba(255, 75, 75, 0.3);
-    }
-    /* ច្នៃ Header */
-    .main-header {
-        text-align: center;
-        color: #FF4B4B;
-        font-family: 'Kantumruy Pro', sans-serif;
-        padding-bottom: 20px;
-    }
-    /* ច្នៃ Sidebar */
-    [data-testid="stSidebar"] {
-        background-color: #0e1117;
+    .stButton>button { width: 100%; border-radius: 10px; height: 3em; font-weight: bold; }
+    .main-header { text-align: center; color: #FF4B4B; margin-bottom: 20px; }
+    div[data-testid="stExpander"] { border: none !important; box-shadow: none !important; }
+    /* កែសម្រួលឱ្យមើលលើទូរស័ព្ទស្រួល */
+    @media (max-width: 640px) {
+        .main-header { font-size: 1.5rem; }
     }
     </style>
     """, unsafe_allow_html=True)
 
-# --- ២. ប្រព័ន្ធ Login (រក្សាទុកដូចដើម) ---
+# --- ២. Load Model ទុកក្នុង RAM (ដើម្បីកុំឱ្យចាំយូរពេលចុចបំប្លែង) ---
+@st.cache_resource
+def get_model():
+    return whisper.load_model("tiny") # ប្រើ Tiny គឺលឿនបំផុតសម្រាប់ Mobile
+
+# --- ៣. ប្រព័ន្ធ Login (រក្សាទុកដូចដើម) ---
 USER_NAME = "admin"
 USER_PASSWORD = "reachzano"
 
@@ -51,35 +42,32 @@ if "logged_in" not in st.session_state: st.session_state.logged_in = False
 if "current_step" not in st.session_state: st.session_state.current_step = 0
 if "generated_srt" not in st.session_state: st.session_state.generated_srt = ""
 
-def login():
-    stored_user = st_javascript("localStorage.getItem('reach_user');")
-    stored_pw = st_javascript("localStorage.getItem('reach_pw');")
-    last_active = st_javascript("localStorage.getItem('last_active');")
-    current_time = int(time.time())
+def login_system():
+    user_val = st_javascript("localStorage.getItem('reach_user');")
+    pw_val = st_javascript("localStorage.getItem('reach_pw');")
+    active_val = st_javascript("localStorage.getItem('last_active');")
+    curr_t = int(time.time())
     
-    if last_active and str(stored_user) == USER_NAME:
-        if (current_time - int(last_active)) < 300: st.session_state.logged_in = True
+    if active_val and str(user_val) == USER_NAME:
+        if (curr_t - int(active_val)) < 600: st.session_state.logged_in = True
 
     if not st.session_state.logged_in:
-        st.markdown("<h1 class='main-header'>🎙️ REACH MAVERICK AI DUBBING</h1>", unsafe_allow_html=True)
+        st.markdown("<h1 class='main-header'>🎙️ REACH MAVERICK AI</h1>", unsafe_allow_html=True)
         with st.container(border=True):
-            _, col2, _ = st.columns([1, 1.5, 1])
-            with col2:
-                st.subheader("🔐 User Login")
-                user = st.text_input("Username", value=stored_user if stored_user else "")
-                pw = st.text_input("Password", type="password", value=stored_pw if stored_pw else "")
-                if st.button("ចូលប្រើប្រព័ន្ធ (Sign In)", type="primary", use_container_width=True):
-                    if user == USER_NAME and pw == USER_PASSWORD:
-                        st.session_state.logged_in = True
-                        st_javascript(f"localStorage.setItem('last_active', '{current_time}');")
-                        st_javascript(f"localStorage.setItem('reach_user', '{user}');")
-                        st_javascript(f"localStorage.setItem('reach_pw', '{pw}');")
-                        st.rerun()
-                    else: st.error("❌ ខុសលេខសម្ងាត់!")
+            u = st.text_input("Username", value=user_val if user_val else "")
+            p = st.text_input("Password", type="password", value=pw_val if pw_val else "")
+            if st.button("ចូលប្រើប្រព័ន្ធ", type="primary"):
+                if u == USER_NAME and p == USER_PASSWORD:
+                    st.session_state.logged_in = True
+                    st_javascript(f"localStorage.setItem('last_active', '{curr_t}');")
+                    st_javascript(f"localStorage.setItem('reach_user', '{u}');")
+                    st_javascript(f"localStorage.setItem('reach_pw', '{p}');")
+                    st.rerun()
+                else: st.error("លេខសម្ងាត់មិនត្រឹមត្រូវ!")
         st.stop()
-login()
+login_system()
 
-# --- ៣. Helper Functions (រក្សាមុខងារបងទាំងអស់) ---
+# --- ៤. Helper Functions (បកប្រែ & តម្រឹមម៉ោង) ---
 def format_time(seconds):
     td = datetime.timedelta(seconds=seconds)
     total_sec = int(td.total_seconds())
@@ -88,159 +76,109 @@ def format_time(seconds):
 
 def simplify_khmer(text):
     if not text: return ""
-    replaces = {"តើ(.*)មែនទេ": r"\1មែនអត់?", "របស់អ្នក": "ឯង", "បាទ": "បាទបង", "ចាស": "ចា៎", "អរគុណ": "អរគុណបង"}
-    for p, r in replaces.items(): text = re.sub(p, r, text)
+    reps = {"តើ(.*)មែនទេ": r"\1មែនអត់?", "របស់អ្នក": "ឯង", "បាទ": "បាទបង", "ចាស": "ចា៎", "អរគុណ": "អរគុណបង"}
+    for p, r in reps.items(): text = re.sub(p, r, text)
     return text.strip()
 
-def create_srt_content(data, lang_key):
-    subs = [srt.Subtitle(index=i+1, start=row['Start'], end=row['End'], content=str(row[lang_key]).replace('\n', ' ').strip()) for i, row in enumerate(data)]
-    return srt.compose(subs)
+async def fetch_tts(row, idx, spd):
+    v = "km-KH-SreymomNeural" if row['Voice'] == "Female" else "km-KH-PisethNeural"
+    fn = f"s_{idx}.mp3"
+    await edge_tts.Communicate(str(row['Khmer_Text']), v, rate=f"{spd:+}%").save(fn)
+    return fn
 
-async def fetch_tts_file(row_data, index, speed):
-    voice = "km-KH-SreymomNeural" if row_data['Voice'] == "Female" else "km-KH-PisethNeural"
-    tmp = f"t_{index}.mp3"
-    await edge_tts.Communicate(str(row_data['Khmer_Text']), voice, rate=f"{speed:+}%").save(tmp)
-    return tmp
-
-# --- ៤. Sidebar ---
+# --- ៥. Sidebar & Navigation ---
 with st.sidebar:
-    st.markdown("<h2 style='color: #FF4B4B;'>Reach Maverick</h2>", unsafe_allow_html=True)
-    st.info(f"👤 Admin: **Reach**")
-    step_list = ["🎙️ Step 1: Transcribe", "🎬 Step 2: Dubbing"]
-    choice = st.radio("ជ្រើសរើសជំហានការងារ", step_list, index=st.session_state.current_step)
-    st.session_state.current_step = 0 if choice == step_list[0] else 1
-    st.divider()
-    if st.button("🚪 Logout", use_container_width=True):
+    st.title("Reach Maverick")
+    mode = st.radio("Step:", ["🎙️ Transcribe", "🎬 Dubbing"], index=st.session_state.current_step)
+    st.session_state.current_step = 0 if "Transcribe" in mode else 1
+    if st.button("🚪 Logout"):
         st_javascript("localStorage.removeItem('last_active');")
         st.session_state.logged_in = False
         st.rerun()
 
-# --- ៥. STEP 1: TRANSCRIBE ---
+# --- ៦. STEP 1: TRANSCRIBE (High-Speed) ---
 if st.session_state.current_step == 0:
-    st.markdown("<h2 style='color: #FF4B4B;'>🎙️ ជំហានទី ១៖ បំប្លែងវីដេអូទៅជាអត្ថបទ</h2>", unsafe_allow_html=True)
-    with st.container(border=True):
-        video_file = st.file_uploader("ដាក់ File វីដេអូ ឬសម្លេង (MP4, MP3, MOV)", type=["mp4", "mp3", "mov", "m4a"])
-        if st.button("🚀 ចាប់ផ្ដើមបំប្លែង (Start Transcribe)", type="primary", use_container_width=True):
-            if video_file:
-                with open("temp.mp4", "wb") as f: f.write(video_file.getbuffer())
-                with st.spinner("🎧 AI កំពុងស្ដាប់ និងរៀបចំអត្ថបទ..."):
-                    model = whisper.load_model("tiny")
-                    res = model.transcribe("temp.mp4", fp16=False)
-                srt_out = ""
-                for i, s in enumerate(res['segments']):
-                    srt_out += f"{i+1}\n{format_time(s['start'])} --> {format_time(s['end'])}\n{s['text'].strip()}\n\n"
-                st.session_state.generated_srt = srt_out
-                if os.path.exists("temp.mp4"): os.remove("temp.mp4")
-                st.success("✅ បំប្លែងចប់សព្វគ្រប់!")
-                st.rerun()
+    st.markdown("<h2 class='main-header'>🎙️ Step 1: Video to SRT</h2>", unsafe_allow_html=True)
+    v_file = st.file_uploader("ជ្រើសរើសវីដេអូ", type=["mp4", "mp3", "mov", "m4a"])
+    if st.button("🚀 ចាប់ផ្ដើមបកប្រែសម្លេង", type="primary"):
+        if v_file:
+            with open("temp.mp4", "wb") as f: f.write(v_file.getbuffer())
+            with st.spinner("⚡ AI កំពុងស្ដាប់..."):
+                model = get_model()
+                res = model.transcribe("temp.mp4", fp16=False)
+            srt_txt = ""
+            for i, s in enumerate(res['segments']):
+                srt_txt += f"{i+1}\n{format_time(s['start'])} --> {format_time(s['end'])}\n{s['text'].strip()}\n\n"
+            st.session_state.generated_srt = srt_txt
+            if os.path.exists("temp.mp4"): os.remove("temp.mp4")
+            st.rerun()
 
     if st.session_state.generated_srt:
-        st.subheader("📝 លទ្ធផល SRT")
-        st.text_area("SRT Content", st.session_state.generated_srt, height=200)
-        c1, c2 = st.columns([1, 1])
-        if c1.button("🗑️ Reset Data", use_container_width=True):
-            st.session_state.generated_srt = ""; st.rerun()
-        if c2.button("បន្តទៅ Step 2 ➡️", type="primary", use_container_width=True):
+        st.text_area("SRT Content", st.session_state.generated_srt, height=150)
+        if st.button("បន្តទៅ Step 2 ➡️", type="primary"):
             st.session_state.current_step = 1; st.rerun()
 
-# --- ៦. STEP 2: DUBBING ---
+# --- ៧. STEP 2: DUBBING (Full Controls) ---
 else:
-    st.markdown("<h2 style='color: #FF4B4B;'>🎬 ជំហានទី ២៖ AI Dubbing & ផលិតសម្លេង</h2>", unsafe_allow_html=True)
+    st.markdown("<h2 class='main-header'>🎬 Step 2: AI Dubbing</h2>", unsafe_allow_html=True)
     if not st.session_state.generated_srt:
-        st.warning("⚠️ សូមបំពេញ Step 1 ជាមុនសិន!"); st.button("⬅️ ត្រឡប់ទៅ Step 1", on_click=lambda: setattr(st.session_state, 'current_step', 0))
+        st.warning("សូមបកប្រែសម្លេងនៅ Step 1 សិន!"); st.button("⬅️ ត្រឡប់ក្រោយ", on_click=lambda: setattr(st.session_state, 'current_step', 0))
     else:
         if 'data' not in st.session_state:
-            with st.container(border=True):
-                st.write("ទិន្នន័យពី Step 1 ត្រូវបានរកឃើញ។ ចុចប៊ូតុងខាងក្រោមដើម្បីបកប្រែ។")
-                if st.button("📥 ចាប់ផ្ដើមបកប្រែជាភាសាខ្មែរ (Turbo)", type="primary", use_container_width=True):
-                    subs = list(srt.parse(st.session_state.generated_srt))
-                    raw_texts = [s.content for s in subs]
-                    with st.spinner("⏳ កំពុងបកប្រែ (Batch Mode)..."):
-                        km_texts = GoogleTranslator(source='auto', target='km').translate_batch(raw_texts)
-                    st.session_state.data = [{"ID": i, "Select": False, "English": raw_texts[i], "Khmer_Text": simplify_khmer(km_texts[i]), "Voice": "Male", "Start": s.start, "End": s.end} for i, s in enumerate(subs)]
-                    st.rerun()
+            if st.button("📥 បកប្រែអត្ថបទជាខ្មែរ", type="primary"):
+                subs = list(srt.parse(st.session_state.generated_srt))
+                with st.spinner("⏳ កំពុងបកប្រែ..."):
+                    km_list = GoogleTranslator(source='auto', target='km').translate_batch([s.content for s in subs])
+                st.session_state.data = [{"ID": i, "Select": False, "English": subs[i].content, "Khmer_Text": simplify_khmer(km_list[i]), "Voice": "Male", "Start": subs[i].start, "End": subs[i].end} for i in range(len(subs))]
+                st.rerun()
 
         if st.session_state.get('data'):
-            tab1, tab2, tab3 = st.tabs(["📝 កែសម្រួលអត្ថបទ", "⚙️ កំណត់សម្លេង", "🎵 ផលិតផលសម្រេច"])
+            df = pd.DataFrame(st.session_state.data)
+            edit_df = st.data_editor(df, use_container_width=True, hide_index=True, 
+                column_config={"Select": st.column_config.CheckboxColumn("✅"), "Khmer_Text": st.column_config.TextColumn("អត្ថបទខ្មែរ", width="large"), "Voice": st.column_config.SelectboxColumn("ភេទ", options=["Male", "Female"]), "ID":None, "Start":None, "End":None, "English":None})
             
-            with tab1:
-                df = pd.DataFrame(st.session_state.data)
-                edited_df = st.data_editor(df, use_container_width=True, hide_index=True, 
-                    column_config={
-                        "Select": st.column_config.CheckboxColumn("រើស", default=False),
-                        "Khmer_Text": st.column_config.TextColumn("អត្ថបទខ្មែរ (កែបាន)", width="large"),
-                        "Voice": st.column_config.SelectboxColumn("ភេទ", options=["Male", "Female"]),
-                        "ID":None, "Start":None, "End":None, "English":st.column_config.TextColumn("អង់គ្លេស", disabled=True)
-                    })
-                
-                st.markdown("**🔧 បញ្ជាលឿន (Quick Batch):**")
-                qc1, qc2, qc3, qc4 = st.columns(4)
-                if qc1.button("🌸 ស្រីទាំងអស់", use_container_width=True):
-                    for item in st.session_state.data: item['Voice'] = "Female"; st.rerun()
-                if qc2.button("💎 ប្រុសទាំងអស់", use_container_width=True):
-                    for item in st.session_state.data: item['Voice'] = "Male"; st.rerun()
-                if qc3.button("👩‍🦰 Tick -> ស្រី", use_container_width=True):
-                    for i, r in edited_df.iterrows():
-                        if r['Select']: st.session_state.data[i]['Voice'] = "Female"; st.rerun()
-                if qc4.button("👨‍🦱 Tick -> ប្រុស", use_container_width=True):
-                    for i, r in edited_df.iterrows():
-                        if r['Select']: st.session_state.data[i]['Voice'] = "Male"; st.rerun()
-                
-                st.divider()
-                if st.button("💾 រក្សាទុកការកែសម្រួល", use_container_width=True):
-                    st.session_state.data = edited_df.to_dict('records'); st.success("រក្សាទុកជោគជ័យ!")
-                
-                c_dl1, c_dl2 = st.columns(2)
-                c_dl1.download_button("📥 Download EN SRT", create_srt_content(st.session_state.data, "English").encode('utf-8-sig'), "en.srt", use_container_width=True)
-                c_dl2.download_button("📥 Download KH SRT", create_srt_content(st.session_state.data, "Khmer_Text").encode('utf-8-sig'), "kh.srt", use_container_width=True)
+            # Quick Buttons (Mobile Friendly)
+            c1, c2 = st.columns(2); c3, c4 = st.columns(2)
+            if c1.button("🌸 ស្រីទាំងអស់"):
+                for x in st.session_state.data: x['Voice'] = "Female"; st.rerun()
+            if c2.button("💎 ប្រុសទាំងអស់"):
+                for x in st.session_state.data: x['Voice'] = "Male"; st.rerun()
+            if c3.button("👩‍🦰 Tick -> ស្រី"):
+                for i, r in edit_df.iterrows():
+                    if r['Select']: st.session_state.data[i]['Voice'] = "Female"; st.rerun()
+            if c4.button("👨‍🦱 Tick -> ប្រុស"):
+                for i, r in edit_df.iterrows():
+                    if r['Select']: st.session_state.data[i]['Voice'] = "Male"; st.rerun()
 
-            with tab2:
-                col_s1, col_s2 = st.columns(2)
-                with col_s1:
-                    st.subheader("🎤 Voice Control")
-                    speed = st.slider("ល្បឿននិយាយ (%)", -50, 50, 0)
-                with col_s2:
-                    st.subheader("🎸 BGM Control")
-                    bgm_file = st.file_uploader("ដាក់ភ្លេង Background", type=["mp3"])
-                    bgm_vol = st.slider("កម្រិតសម្លេង BGM", 0, 100, 20)
+            st.divider()
+            spd_val = st.slider("ល្បឿននិយាយ (%)", -50, 50, 0)
+            bgm = st.file_uploader("ភ្លេង BGM (បើមាន)", type=["mp3"])
+            
+            if st.button("🚀 START TURBO DUBBING", type="primary"):
+                st.session_state.data = edit_df.to_dict('records')
+                async def run_now():
+                    return await asyncio.gather(*[fetch_tts(r, i, spd_val) for i, r in enumerate(st.session_state.data)])
+                with st.spinner("🎙️ កំពុងផលិតសម្លេងរលូន..."):
+                    f_list = asyncio.run(run_now())
+                    combined = AudioSegment.silent(duration=0)
+                    curr_ms = 0
+                    for i, r in enumerate(st.session_state.data):
+                        s_ms, e_ms = int(r['Start'].total_seconds()*1000), int(r['End'].total_seconds()*1000)
+                        seg = AudioSegment.from_file(f_list[i]).strip_silence()
+                        d = max(1, e_ms - s_ms)
+                        if len(seg) > (d + 300): seg = speedup(seg, playback_speed=min(len(seg)/d, 1.4), chunk_size=150, crossfade=25)
+                        if s_ms > curr_ms: combined += AudioSegment.silent(duration=s_ms - curr_ms); combined += seg
+                        else: combined = combined.append(seg, crossfade=100)
+                        curr_ms = len(combined); os.remove(f_list[i])
+                    if bgm:
+                        b_seg = AudioSegment.from_file(bgm) - 25
+                        combined = combined.overlay(b_seg * (int(len(combined)/len(b_seg)) + 1))
+                    combined.export("final.mp3", format="mp3")
+                    with open("final.mp3", "rb") as f: st.session_state.audio_bytes = f.read()
+                st.success("ផលិតរួចរាល់!")
 
-            with tab3:
-                if st.button("🚀 ចាប់ផ្ដើមផលិត MP3 (Turbo Dubbing)", type="primary", use_container_width=True):
-                    st.session_state.data = edited_df.to_dict('records')
-                    async def run_dub():
-                        return await asyncio.gather(*[fetch_tts_file(row, i, speed) for i, row in enumerate(st.session_state.data)])
+            if st.session_state.get('audio_bytes'):
+                st.audio(st.session_state.audio_bytes)
+                st.download_button("📥 ទាញយក MP3", st.session_state.audio_bytes, "reach_maverick.mp3", type="primary")
 
-                    with st.spinner("🎙️ កំពុងផលិតសម្លេង និងតម្រឹមម៉ោងឱ្យរលូន..."):
-                        audio_files = asyncio.run(run_dub())
-                        combined = AudioSegment.silent(duration=0)
-                        curr_ms = 0
-                        for i, row in enumerate(st.session_state.data):
-                            start_ms = int(row['Start'].total_seconds() * 1000)
-                            end_ms = int(row['End'].total_seconds() * 1000)
-                            seg = AudioSegment.from_file(audio_files[i]).strip_silence()
-                            dur = max(1, end_ms - start_ms)
-                            if len(seg) > (dur + 300):
-                                seg = speedup(seg, playback_speed=min(len(seg)/dur, 1.4), chunk_size=150, crossfade=25)
-                            if start_ms > curr_ms:
-                                combined += AudioSegment.silent(duration=start_ms - curr_ms)
-                                combined += seg
-                            else:
-                                combined = combined.append(seg, crossfade=100)
-                            curr_ms = len(combined)
-                            os.remove(audio_files[i])
-                        
-                        if bgm_file:
-                            bgm = AudioSegment.from_file(bgm_file) - (60 - (bgm_vol * 0.6))
-                            combined = combined.overlay(bgm * (int(len(combined)/len(bgm)) + 1))
-                        
-                        combined.export("final.mp3", format="mp3")
-                        with open("final.mp3", "rb") as f: st.session_state.audio_bytes = f.read()
-                    st.balloons()
-                
-                if st.session_state.get('audio_bytes'):
-                    st.success("🎉 ការផលិតត្រូវបានបញ្ចប់!")
-                    st.audio(st.session_state.audio_bytes)
-                    st.download_button("📥 ទាញយក File សម្លេងសម្រេច", st.session_state.audio_bytes, "reach_maverick_final.mp3", type="primary", use_container_width=True)
-
-        st.divider()
-        st.button("⬅️ Back to Step 1", on_click=lambda: setattr(st.session_state, 'current_step', 0))
+        st.button("⬅️ ត្រឡប់ទៅ Step 1", on_click=lambda: setattr(st.session_state, 'current_step', 0))
