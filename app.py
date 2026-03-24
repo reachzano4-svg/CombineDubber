@@ -18,141 +18,73 @@ from streamlit_javascript import st_javascript
 # --- ១. កំណត់ Page Config ---
 st.set_page_config(page_title="Reach AI Pro", layout="wide", page_icon="🎙️")
 
-# --- ២. ប្រព័ន្ធ Login ---
-USER_NAME = "admin"
-USER_PASSWORD = "reachzano"
-
-def login():
-    stored_user = st_javascript("localStorage.getItem('reach_user');")
-    stored_pw = st_javascript("localStorage.getItem('reach_pw');")
-    last_active = st_javascript("localStorage.getItem('last_active');")
-    current_time = int(time.time())
-    timeout_seconds = 180 
-
-    if "logged_in" not in st.session_state:
-        st.session_state.logged_in = False
-
-    if last_active and stored_user == USER_NAME:
-        if (current_time - int(last_active)) <= timeout_seconds:
-            st.session_state.logged_in = True
-    
-    if not st.session_state.logged_in:
-        st.markdown("<h1 style='text-align: center;'>🎙️ REACH MAVERICK PRO</h1>", unsafe_allow_html=True)
-        col1, col2, col3 = st.columns([1, 1.5, 1])
-        with col2:
-            user = st.text_input("Username", value=stored_user if stored_user else "")
-            pw = st.text_input("Password", type="password", value=stored_pw if stored_pw else "")
-            if st.button("ចូលប្រើប្រាស់ AI", type="primary", use_container_width=True):
-                if user == USER_NAME and pw == USER_PASSWORD:
-                    st.session_state.logged_in = True
-                    st.session_state.current_step = 0
-                    st_javascript(f"localStorage.setItem('last_active', '{current_time}');")
-                    st_javascript(f"localStorage.setItem('reach_user', '{user}');")
-                    st_javascript(f"localStorage.setItem('reach_pw', '{pw}');")
-                    st.rerun()
-                else: st.error("ខុសឈ្មោះ ឬលេខសម្ងាត់!")
-        st.stop()
-    else:
-        st_javascript(f"localStorage.setItem('last_active', '{current_time}');")
-
-login()
-
-# --- ៣. Gemini API Configuration with Status Check ---
+# --- ២. Gemini API Configuration (Auto-Save & Status Check) ---
 st.sidebar.markdown("### 🔑 API Configuration")
 saved_key = st_javascript("localStorage.getItem('gemini_api_key');")
 
 api_key_input = st.sidebar.text_input(
     "Gemini API Key", 
     value=saved_key if saved_key else "",
-    type="password"
+    type="password",
+    help="ប្តូរលេខថ្មីនៅទីនេះពេលអស់ Free Tier"
 )
 
 def check_api_status(key):
     if not key: return False
     try:
         genai.configure(api_key=key)
-        model = genai.GenerativeModel('gemini-1.5-flash')
-        # ប្តូរមកសាកសួរខ្លីបំផុត ដើម្បីកុំឱ្យអស់ Token
-        response = model.generate_content("test", generation_config={"max_output_tokens": 1})
-        if response:
-            return True
-        return False
+        # ប្រើ model_name ពេញលេញដើម្បីការពារ Error 404
+        model = genai.GenerativeModel(model_name='gemini-1.5-flash')
+        model.generate_content("test", generation_config={"max_output_tokens": 1})
+        return True
     except Exception as e:
-        # បង្ហាញ Error ពិតប្រាកដឱ្យបងឃើញតែម្តង
-        st.sidebar.error(f"Error Detail: {str(e)}")
+        st.sidebar.error(f"Error: {str(e)}")
         return False
 
 if api_key_input:
     st_javascript(f"localStorage.setItem('gemini_api_key', '{api_key_input}');")
-    
-    # ប៊ូតុងឆែក Status
     if st.sidebar.button("🔍 Check API Status"):
-        with st.sidebar:
-            if check_api_status(api_key_input):
-                st.success("✅ API Active (Free Tier)")
-                st.session_state.api_ready = True
-            else:
-                st.error("❌ API Expired / Invalid Key")
-                st.session_state.api_ready = False
+        if check_api_status(api_key_input):
+            st.sidebar.success("✅ API Active")
+            st.session_state.api_ready = True
+        else:
+            st.sidebar.error("❌ API Invalid/Expired")
+            st.session_state.api_ready = False
     else:
-        # ឱ្យវា Ready ជាមុនសិន បើមិនទាន់បានចុច Test
         genai.configure(api_key=api_key_input)
         st.session_state.api_ready = True
 else:
     st.sidebar.warning("⚠️ សូមបំពេញ API Key")
     st.session_state.api_ready = False
 
-# --- ៤. Helper Functions ---
+# --- ៣. Helper Functions ---
 def format_time(seconds):
     td = datetime.timedelta(seconds=seconds)
     ts = int(td.total_seconds())
     ms = int((td.total_seconds() - ts) * 1000)
     return f"{ts // 3600:02}:{(ts % 3600) // 60:02}:{ts % 60:02},{ms:03}"
 
-# ដូរពី 'gemini-1.5-flash' មកជា 'models/gemini-1.5-flash' វិញ (ប្រសិនបើនៅតែលោត 404)
-# ប៉ុន្តែជាទូទៅ គ្រាន់តែ Update Library ក្នុង requirements.txt គឺដើរហើយបង។
-
 def gemini_refine_srt(raw_srt):
     if not st.session_state.get('api_ready'):
-        return raw_srt
-    
-    try:
-        # ប្រើ model_name បែបនេះដើម្បីឱ្យវាស្គាល់ច្បាស់
-        model = genai.GenerativeModel(model_name='gemini-1.5-flash')
-        
-        # បន្ថែមការកំណត់ Safety ដើម្បីកុំឱ្យវាបដិសេធអត្ថបទរឿងរបស់បង
-        response = model.generate_content(
-            prompt,
-            safety_settings={
-                "HARM_CATEGORY_HARASSMENT": "BLOCK_NONE",
-                "HARM_CATEGORY_HATE_SPEECH": "BLOCK_NONE",
-                "HARM_CATEGORY_SEXUALLY_EXPLICIT": "BLOCK_NONE",
-                "HARM_CATEGORY_DANGEROUS_CONTENT": "BLOCK_NONE",
-            }
-        )
-        return response.text.strip()
-    except Exception as e:
-        st.error(f"❌ Gemini Error: {str(e)}")
+        st.error("❌ API មិនទាន់ Ready!")
         return raw_srt
     
     prompt = f"""
-    Role: Professional Video Editor/Dubber.
-    Task: Refine the following SRT into short, natural dialogue segments (7-10 words each).
-    Rules:
-    1. KEEP EXACT TIMECODES.
-    2. Correct any misheard words from AI.
-    3. If a segment is too long, split it into two while adjusting times.
-    4. Keep it conversational.
-    
-    SRT CONTENT:
+    Role: Professional Video Dubber.
+    Task: Refine SRT into natural, short Khmer-friendly dialogue (7-10 words per segment).
+    Rules: 
+    1. DO NOT CHANGE TIMECODES. 
+    2. Fix spelling and remove stuttering. 
+    3. Split long sentences if needed.
+    SRT:
     {raw_srt}
     """
     try:
-        model = genai.GenerativeModel('gemini-1.5-flash')
+        model = genai.GenerativeModel(model_name='gemini-1.5-flash')
         response = model.generate_content(prompt)
         return response.text.strip()
     except Exception as e:
-        st.error(f"❌ Gemini Error: សូមប្តូរ API Key ថ្មី! ({str(e)})")
+        st.error(f"❌ Gemini Refine Error: {str(e)}")
         return raw_srt
 
 def simplify_khmer(text):
@@ -183,25 +115,20 @@ async def process_audio(data, base_speed, status, progress):
             except: pass
     return combined
 
-# --- ៥. Navigation Logic ---
+# --- ៤. Navigation Logic ---
 if 'current_step' not in st.session_state: st.session_state.current_step = 0
 step_options = ["បំប្លែងវីដេអូ (Transcribe)", "បញ្ចូលសម្លេង (Dubbing)"]
 selected_step = st.sidebar.radio("ជំហានការងារ", step_options, index=st.session_state.current_step)
 st.session_state.current_step = 0 if selected_step == step_options[0] else 1
 
-if st.sidebar.button("🚪 Logout"):
-    st_javascript("localStorage.clear();")
-    st.session_state.logged_in = False
-    st.rerun()
-
-# --- ៦. Step 0: TRANSCRIBE ---
+# --- ៥. Step 0: TRANSCRIBE ---
 if st.session_state.current_step == 0:
     st.title("🎙️ Step 1: Video to Smart SRT")
     video_file = st.file_uploader("ជ្រើសរើសវីដេអូ", type=["mp4", "mp3", "mov", "m4a"])
     
     if st.button("🚀 ចាប់ផ្ដើមបំប្លែង (Smart Mode)", type="primary", use_container_width=True):
         if video_file:
-            with st.spinner("កំពុងបំប្លែង និងសម្រួលដោយ Gemini..."):
+            with st.spinner("Whisper កំពុងបំប្លែង និង Gemini កំពុងសម្រួលអត្ថបទ..."):
                 with open("temp.mp4", "wb") as f: f.write(video_file.getbuffer())
                 model = whisper.load_model("tiny")
                 res = model.transcribe("temp.mp4")
@@ -210,16 +137,17 @@ if st.session_state.current_step == 0:
                 for i, s in enumerate(res['segments']):
                     raw_srt += f"{i+1}\n{format_time(s['start'])} --> {format_time(s['end'])}\n{s['text'].strip()}\n\n"
                 
-                refined_srt = gemini_refine_srt(raw_srt)
-                st.session_state.generated_srt = refined_srt
-                st.success("បំប្លែងរួចរាល់!")
+                # ប្រើ Gemini សម្រួលអត្ថបទឱ្យស្អាត
+                st.session_state.generated_srt = gemini_refine_srt(raw_srt)
+                st.success("រួចរាល់!")
+                if os.path.exists("temp.mp4"): os.remove("temp.mp4")
 
     if st.session_state.get('generated_srt'):
-        st.text_area("លទ្ធផល SRT ពី Gemini", st.session_state.generated_srt, height=250)
+        st.text_area("លទ្ធផល SRT ពី Gemini", st.session_state.generated_srt, height=300)
         if st.button("បន្តទៅមុខ ➡️", type="primary", use_container_width=True):
             st.session_state.current_step = 1; st.rerun()
 
-# --- ៧. Step 1: DUBBING ---
+# --- ៦. Step 1: DUBBING ---
 else:
     st.title("🎬 Step 2: AI Dubbing")
     srt_input = st.session_state.get('generated_srt', "")
