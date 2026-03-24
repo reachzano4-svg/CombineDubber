@@ -1,7 +1,7 @@
 import os
-os.environ["PROTOCOL_BUFFERS_PYTHON_IMPLEMENTATION"] = "python" # បន្ថែមជួរនេះលើគេបង្អស់
-# ... បន្តមកកូដដែលបងមានស្រាប់ ...
-# ... កូដផ្សេងទៀត ...import os
+# បង្ខំឱ្យប្រើ Pure Python ដើម្បីកុំឱ្យជាន់គ្នាជាមួយ Library របស់ Server
+os.environ["PROTOCOL_BUFFERS_PYTHON_IMPLEMENTATION"] = "python" 
+
 import sys
 import time
 import datetime
@@ -16,7 +16,7 @@ from pydub import AudioSegment
 from pydub.effects import speedup
 from streamlit_javascript import st_javascript
 
-# --- បង្ខំឱ្យស្គាល់ Audioop លើរាល់ Python Version ---
+# --- ដោះស្រាយបញ្ហា Audioop ឱ្យមានស្ថេរភាពលើ Python 3.11+ ---
 try:
     import audioop
 except ImportError:
