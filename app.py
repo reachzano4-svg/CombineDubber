@@ -1,9 +1,14 @@
 try:
+    try:
     import audioop
 except ImportError:
-    import audioop_lts as audioop
-    import sys
-    sys.modules['audioop'] = audioop
+    try:
+        import audioop_lts as audioop
+        import sys
+        sys.modules['audioop'] = audioop
+    except ImportError:
+        # បើនៅតែរកមិនឃើញទៀត វានឹងប្រាប់ឱ្យដឹង
+        st.error("សូមថែម audioop-lts ក្នុង requirements.txt សិនបង Reach!")
 
 import streamlit as st
 import whisper
