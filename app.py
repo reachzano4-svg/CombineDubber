@@ -4,6 +4,7 @@ import datetime
 import asyncio
 import edge_tts
 import srt
+import re  # <--- បន្ថែម re សម្រាប់ simplify_khmer
 import pandas as pd
 import google.generativeai as genai
 import streamlit as st
@@ -11,14 +12,25 @@ from pydub import AudioSegment
 from pydub.effects import speedup
 from streamlit_javascript import st_javascript
 
-# --- ១. កំណត់ Page Config & API ---
-st.set_page_config(page_title="Reach AI Maverick Pro", layout="wide")
+# --- ដោះស្រាយបញ្ហា Audioop សម្រាប់ Python 3.13+ ---
+try:
+    import audioop
+except ImportError:
+    try:
+        import audioop_lts as audioop
+        import sys
+        sys.modules['audioop'] = audioop
+    except ImportError:
+        pass
 
-# កំណត់ API Key របស់បងត្រង់នេះ
+# --- ១. កំណត់ Page Config & API ---
+st.set_page_config(page_title="Reach AI Maverick Pro", layout="wide", page_icon="🎬")
+
+# កំណត់ API Key របស់បង Reach
 API_KEY = "AIzaSyA4cqoTPWFsavOCEra_0aTJ-r7HciPnBto"
 genai.configure(api_key=API_KEY)
 
-# --- ២. ប្រព័ន្ធ Login (រក្សាទុកតាមសំណើបង) ---
+# --- ២. ប្រព័ន្ធ Login ---
 USER_NAME = "admin"
 USER_PASSWORD = "reachzano"
 
@@ -34,13 +46,11 @@ def login():
 
     if last_active and stored_user == USER_NAME:
         elapsed = current_time - int(last_active)
-        if elapsed > timeout_seconds:
-            st.session_state.logged_in = False
-        else:
+        if elapsed <= timeout_seconds:
             st.session_state.logged_in = True
     
     if not st.session_state.logged_in:
-        st.markdown("<h2 style='text-align: center;'>🔐 ចូលប្រើប្រាស់ Reach AI</h2>", unsafe_allow_html=True)
+        st.markdown("<h2 style='text-align: center;'>🔐 Reach AI Maverick Pro Login</h2>", unsafe_allow_html=True)
         col1, col2, col3 = st.columns([1, 1.5, 1])
         with col2:
             user = st.text_input("Username", value=stored_user if stored_user else "")
@@ -63,13 +73,10 @@ def login():
 
 login()
 
-# --- ៣. Helper Functions (Gemini Logic) ---
-def get_working_model():
-    # ប្រើ Flash 1.5 ព្រោះវាលឿនបំផុតសម្រាប់ Streaming Audio
-    return "models/gemini-1.5-flash"
-
+# --- ៣. Helper Functions ---
 def simplify_khmer(text):
     if not text: return ""
+    # ប្រើ re.sub ដើម្បីប្តូរពាក្យឱ្យសមរម្យ
     replaces = {"តើ(.*)មែនទេ": r"\1មែនអត់?", "របស់អ្នក": "ឯង", "បាទ": "បាទបង", "ចាស": "ចា៎"}
     for p, r in replaces.items(): text = re.sub(p, r, text)
     return text.strip()
@@ -96,7 +103,7 @@ async def process_audio_dubbing(data, base_speed, status, progress):
             seg = AudioSegment.from_file(tmp)
             duration_limit = end_ms - start_ms
             if len(seg) > (duration_limit + 500):
-                seg = speedup(seg, playback_speed=min(len(seg)/duration_limit, 1.4))
+                seg = speedup(seg, playback_speed=min(len(seg)/max(duration_limit,1), 1.4))
             combined += seg
             current_ms += len(seg)
             os.remove(tmp)
@@ -105,47 +112,49 @@ async def process_audio_dubbing(data, base_speed, status, progress):
 # --- ៤. Main UI Logic ---
 if 'current_step' not in st.session_state: st.session_state.current_step = 0
 
-step_options = ["🎙️ Transcribe & Translate", "🎬 AI Dubbing"]
+step_options = ["🎙️ Transcribe & Translate (Smart)", "🎬 AI Dubbing Professional"]
 selected_step = st.sidebar.radio("ជំហានការងារ", step_options, index=st.session_state.current_step)
 st.session_state.current_step = 0 if selected_step == step_options[0] else 1
 
-# --- ទំព័រទី ១: TRANSCRIBE & TRANSLATE (ជាមួយ Gemini) ---
+# --- ទំព័រទី ១: TRANSCRIBE & TRANSLATE ---
 if st.session_state.current_step == 0:
-    st.title("🎙️ Step 1: Gemini Audio Intelligence")
-    video_file = st.file_uploader("ជ្រើសរើសវីដេអូ ឬសម្លេង", type=["mp4", "mp3", "mov", "m4a"])
+    st.title("🎙️ Step 1: Gemini AI Cinema Intelligence")
+    video_file = st.file_uploader("ជ្រើសរើសវីដេអូ ឬសម្លេងរឿងភាគចិន", type=["mp4", "mp3", "mov", "m4a"])
     
-    if st.button("🚀 ចាប់ផ្ដើមបំប្លែងជាមួយ Gemini", type="primary"):
+    if st.button("🚀 ចាប់ផ្ដើមបំប្លែងជាមួយ Gemini", type="primary", use_container_width=True):
         if video_file:
-            with st.spinner("Gemini កំពុងស្តាប់ និងបកប្រែ..."):
+            with st.spinner("Gemini កំពុងស្ដាប់ និងបកប្រែជាភាសារឿងភាគចិន..."):
                 with open("temp_input", "wb") as f: f.write(video_file.getbuffer())
                 
-                # បង្ហោះទៅ Google Server
                 gemini_file = genai.upload_file(path="temp_input")
                 while gemini_file.state.name == "PROCESSING":
                     time.sleep(2)
                     gemini_file = genai.get_file(gemini_file.name)
                 
-                model = genai.GenerativeModel(model_name=get_working_model())
+                model = genai.GenerativeModel(model_name="gemini-1.5-flash")
                 
-                # Prompt ពិសេសបង្រួម Step: Transcribe + Translate ជាភាសាខ្មែរែក្នុងពេលតែមួយ
+                # Prompt ថ្មីសម្រាប់បង Reach - បែបរឿងភាគចិន
                 prompt = (
-                    "Transcribe this audio into SRT format. "
-                    "Crucial: Translate everything into natural, conversational Khmer. "
-                    "Use appropriate pronouns like 'បង', 'អូន' for drama context. "
-                    "Output ONLY the raw SRT content."
+                    "Task: Transcribe and translate this audio into professional SRT format.\n"
+                    "Style: Modern Chinese Youth Drama (Dubbing style).\n"
+                    "Language: Natural, Conversational Khmer.\n"
+                    "Instructions:\n"
+                    "1. Use appropriate pronouns based on context: 'បង', 'អូន', 'ឯង', 'យើង', 'ខ្ញុំ'.\n"
+                    "2. Make the dialogue sound emotional and smooth, like a real movie dubbing.\n"
+                    "3. Format: Strictly output ONLY the raw SRT content with correct timecodes."
                 )
                 
                 response = model.generate_content([prompt, gemini_file])
                 st.session_state.generated_srt = response.text
                 st.success("បំប្លែង និងបកប្រែជោគជ័យ!")
+                if os.path.exists("temp_input"): os.remove("temp_input")
 
     if st.session_state.get('generated_srt'):
-        st.text_area("លទ្ធផល SRT (ភាសាខ្មែរ)", st.session_state.generated_srt, height=300)
-        if st.button("បន្តទៅការបញ្ចូលសម្លេង (Dubbing) ➡️", type="primary"):
-            st.session_state.current_step = 1
-            st.rerun()
+        st.text_area("លទ្ធផល SRT សម្រាប់រឿងភាគ", st.session_state.generated_srt, height=350)
+        if st.button("បន្តទៅការបញ្ចូលសម្លេង (Dubbing) ➡️", type="primary", use_container_width=True):
+            st.session_state.current_step = 1; st.rerun()
 
-# --- ទំព័រទី ២: DUBBING (រក្សាទុក Logic ដើម ប៉ុន្តែសម្រួលការបកប្រែ) ---
+# --- ទំព័រទី ២: DUBBING ---
 else:
     st.title("🎬 Step 2: AI Dubbing Professional")
     srt_input = st.session_state.get('generated_srt', "")
@@ -154,13 +163,12 @@ else:
         st.warning("⚠️ សូមបំពេញ Step 1 ជាមុនសិន!")
     else:
         if 'data' not in st.session_state:
-            # បំប្លែង SRT ទៅជា DataFrame សម្រាប់កែសម្រួល
             subs = list(srt.parse(srt_input))
             data = []
             for i, s in enumerate(subs):
                 data.append({
                     "ID": i, "Select": False, 
-                    "Khmer_Text": s.content, 
+                    "Khmer_Text": simplify_khmer(s.content), 
                     "Voice": "Male", "Start": s.start, "End": s.end
                 })
             st.session_state.data = data
@@ -170,18 +178,19 @@ else:
             edited_df = st.data_editor(df, use_container_width=True, hide_index=True,
                 column_config={"Select": st.column_config.CheckboxColumn("រើស"), "Khmer_Text": st.column_config.TextColumn("អត្ថបទខ្មែរ", width="large"), "Voice": st.column_config.SelectboxColumn("ភេទ", options=["Male", "Female"]), "ID":None, "Start":None, "End":None})
             
-            if st.button("💾 រក្សាទុក និងរៀបចំផលិតសម្លេង"):
+            if st.button("💾 រក្សាទុកការកែសម្រួល"):
                 st.session_state.data = edited_df.to_dict('records')
-                st.success("រក្សាទុកជោគជ័យ!")
+                st.success("Saved!")
 
             speed = st.slider("ល្បឿនសម្លេង (%)", -20, 20, 0)
-            if st.button("🚀 START DUBBING", type="primary"):
+            if st.button("🚀 START DUBBING", type="primary", use_container_width=True):
                 stat, pb = st.empty(), st.progress(0)
                 final_audio = asyncio.run(process_audio_dubbing(st.session_state.data, speed, stat, pb))
                 final_audio.export("output.mp3", format="mp3")
                 with open("output.mp3", "rb") as f:
-                    st.audio(f.read())
-                    st.download_button("📥 ទាញយក MP3", f.read(), "reach_dubbing.mp3")
+                    voice_data = f.read()
+                    st.audio(voice_data)
+                    st.download_button("📥 ទាញយក MP3", voice_data, "reach_maverick_dub.mp3")
 
 if st.sidebar.button("🚪 Logout"):
     st_javascript("localStorage.removeItem('last_active');")
