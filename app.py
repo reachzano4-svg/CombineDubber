@@ -1,9 +1,4 @@
 try:
-    def format_time(seconds):
-    td = datetime.timedelta(seconds=seconds)
-    total_sec = int(td.total_seconds())
-    milis = int((td.total_seconds() - total_sec) * 1000)
-    return f"{total_sec // 3600:02}:{(total_sec % 3600) // 60:02}:{total_sec % 60:02},{milis:03}"
     import audioop
 except ImportError:
     try:
@@ -11,8 +6,7 @@ except ImportError:
         import sys
         sys.modules['audioop'] = audioop
     except ImportError:
-        # បើនៅតែរកមិនឃើញទៀត វានឹងប្រាប់ឱ្យដឹង
-        st.error("សូមថែម audioop-lts ក្នុង requirements.txt សិនបង Reach!")
+        pass
 
 import streamlit as st
 import whisper
@@ -27,48 +21,64 @@ from streamlit_javascript import st_javascript
 # --- ១. កំណត់ Page Config ---
 st.set_page_config(page_title="Reach AI Pro", layout="wide", page_icon="🎙️")
 
-# --- ២. Gemini API Configuration (Auto-Save & Status Check) ---
+# --- ២. កំណត់ Function format_time ឱ្យនៅខាងលើបង្អស់ (ដើម្បីដោះស្រាយ NameError) ---
+def format_time(seconds):
+    td = datetime.timedelta(seconds=seconds)
+    total_sec = int(td.total_seconds())
+    milis = int((td.total_seconds() - total_sec) * 1000)
+    return f"{total_sec // 3600:02}:{(total_sec % 3600) // 60:02}:{total_sec % 60:02},{milis:03}"
+
+# --- ៣. Gemini API Configuration (Auto-Save & Status Check) ---
 st.sidebar.markdown("### 🔑 API Configuration")
 saved_key = st_javascript("localStorage.getItem('gemini_api_key');")
 
 api_key_input = st.sidebar.text_input(
     "Gemini API Key", 
     value=saved_key if saved_key else "",
-    type="password",
-    help="ប្តូរលេខថ្មីនៅទីនេះពេលអស់ Free Tier"
+    type="password"
 )
 
 def check_api_status(key):
     if not key: return False
     try:
-        # បង្ខំឱ្យប្រើ API Key ថ្មី
         genai.configure(api_key=key)
-        # ប្រើឈ្មោះម៉ូដែលខ្លី 'gemini-1.5-flash' 
-        # ប្រសិនបើនៅតែ 404 បងសាកដូរទៅ 'gemini-pro' ដើម្បីតេស្តសិនក៏បាន
+        # ប្រើ model_name បែបនេះដើម្បីដោះស្រាយ Error 404
         model = genai.GenerativeModel('gemini-1.5-flash')
-        
-        # សាកល្បងហៅដោយមិនបញ្ជាក់ Version ច្រើនពេក
-        response = model.generate_content("test", generation_config={"max_output_tokens": 1})
+        model.generate_content("test", generation_config={"max_output_tokens": 1})
         return True
     except Exception as e:
-        # បង្ហាញ Error ឱ្យចំថាបញ្ហាអី
         st.sidebar.error(f"Error: {str(e)}")
         return False
 
+if api_key_input:
+    st_javascript(f"localStorage.setItem('gemini_api_key', '{api_key_input}');")
+    if st.sidebar.button("🔍 Check API Status"):
+        if check_api_status(api_key_input):
+            st.sidebar.success("✅ API Active")
+            st.session_state.api_ready = True
+        else:
+            st.sidebar.error("❌ API Invalid/Expired")
+            st.session_state.api_ready = False
+    else:
+        genai.configure(api_key=api_key_input)
+        st.session_state.api_ready = True
+else:
+    st.sidebar.warning("⚠️ សូមបំពេញ API Key")
+    st.session_state.api_ready = False
+
+# --- ៤. Helper Functions ផ្សេងៗ ---
 def gemini_refine_srt(raw_srt):
     if not st.session_state.get('api_ready'):
         return raw_srt
     
-    # ប្រើ Prompt ឱ្យសាមញ្ញបំផុតសម្រាប់ Test
-    prompt = f"Please clean up this SRT text for better flow in Khmer dubbing, keep timecodes: {raw_srt}"
+    prompt = f"Please clean up this SRT text for better flow in Khmer dubbing, keep timecodes exactly as they are: \n\n{raw_srt}"
     
     try:
-        # បង្កើត Model Object ថ្មីរាល់ពេលហៅ
         model = genai.GenerativeModel('gemini-1.5-flash')
         response = model.generate_content(prompt)
         return response.text.strip()
     except Exception as e:
-        st.error(f"❌ Gemini Refine Error: {str(e)}")
+        st.error(f"❌ Gemini Error: {str(e)}")
         return raw_srt
 
 def simplify_khmer(text):
@@ -99,13 +109,13 @@ async def process_audio(data, base_speed, status, progress):
             except: pass
     return combined
 
-# --- ៤. Navigation Logic ---
+# --- ៥. Navigation Logic ---
 if 'current_step' not in st.session_state: st.session_state.current_step = 0
 step_options = ["បំប្លែងវីដេអូ (Transcribe)", "បញ្ចូលសម្លេង (Dubbing)"]
 selected_step = st.sidebar.radio("ជំហានការងារ", step_options, index=st.session_state.current_step)
 st.session_state.current_step = 0 if selected_step == step_options[0] else 1
 
-# --- ៥. Step 0: TRANSCRIBE ---
+# --- ៦. Step 0: TRANSCRIBE ---
 if st.session_state.current_step == 0:
     st.title("🎙️ Step 1: Video to Smart SRT")
     video_file = st.file_uploader("ជ្រើសរើសវីដេអូ", type=["mp4", "mp3", "mov", "m4a"])
@@ -121,9 +131,8 @@ if st.session_state.current_step == 0:
                 for i, s in enumerate(res['segments']):
                     raw_srt += f"{i+1}\n{format_time(s['start'])} --> {format_time(s['end'])}\n{s['text'].strip()}\n\n"
                 
-                # ប្រើ Gemini សម្រួលអត្ថបទឱ្យស្អាត
                 st.session_state.generated_srt = gemini_refine_srt(raw_srt)
-                st.success("រួចរាល់!")
+                st.success("បំប្លែងរួចរាល់!")
                 if os.path.exists("temp.mp4"): os.remove("temp.mp4")
 
     if st.session_state.get('generated_srt'):
@@ -131,7 +140,7 @@ if st.session_state.current_step == 0:
         if st.button("បន្តទៅមុខ ➡️", type="primary", use_container_width=True):
             st.session_state.current_step = 1; st.rerun()
 
-# --- ៦. Step 1: DUBBING ---
+# --- ៧. Step 1: DUBBING ---
 else:
     st.title("🎬 Step 2: AI Dubbing")
     srt_input = st.session_state.get('generated_srt', "")
@@ -158,7 +167,7 @@ else:
                 edited_df = st.data_editor(df, use_container_width=True, hide_index=True,
                     column_config={"Select": st.column_config.CheckboxColumn("រើស"), "Khmer_Text": st.column_config.TextColumn("KH", width="large"), "Voice": st.column_config.SelectboxColumn("ភេទ", options=["Male", "Female"]), "ID":None, "Start":None, "End":None})
                 if st.button("💾 រក្សាទុក"):
-                    st.session_state.data = edited_df.to_dict('records'); st.success("Saved!")
+                    st.session_state.data = edited_df.to_dict('records'); st.success("រក្សាទុករួចរាល់!")
 
             with tab_setting:
                 speed = st.slider("ល្បឿន (%)", -50, 50, 0)
