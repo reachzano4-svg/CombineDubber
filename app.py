@@ -74,7 +74,8 @@ def gemini_refine_srt(raw_srt):
     prompt = f"Please clean up this SRT text for better flow in Khmer dubbing, keep timecodes exactly as they are: \n\n{raw_srt}"
     
     try:
-        model = genai.GenerativeModel('gemini-1.5-flash')
+        # ក្នុង function gemini_refine_srt និង check_api_status
+model = genai.GenerativeModel('gemini-1.5-flash-latest') # ថែមពាក្យ -latest ពីក្រោយ
         response = model.generate_content(prompt)
         return response.text.strip()
     except Exception as e:
