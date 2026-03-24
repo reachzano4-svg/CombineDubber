@@ -1,9 +1,9 @@
 streamlit
 openai-whisper
+google-generativeai
 edge-tts
 srt
-pandas
 pydub
-deep_translator
-audioop-lts
+pandas
 streamlit-javascript
+deep-translator
