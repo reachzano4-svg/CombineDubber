@@ -14,7 +14,7 @@ from pydub.effects import speedup
 from deep_translator import GoogleTranslator
 from streamlit_javascript import st_javascript
 
-# --- ១. កំណត់ Page Config & Gold Theme ---
+# --- ១. Page Config & Gold Theme ---
 st.set_page_config(page_title="Reach Maverick AI", layout="wide", page_icon="🎙️")
 
 st.markdown("""
@@ -72,7 +72,7 @@ def login_system():
                     st_javascript(f"localStorage.setItem('reach_user', '{u}');")
                     st_javascript(f"localStorage.setItem('reach_pw', '{p}');")
                     st.rerun()
-                else: st.error("លេខសម្ងាត់មិនត្រឹមត្រូវ!")
+                else: st.error("Wrong!")
         st.stop()
 login_system()
 
@@ -89,18 +89,17 @@ async def fetch_tts(row, idx, spd):
     await edge_tts.Communicate(str(row['Khmer_Text']), v, rate=f"{spd:+}%").save(fn)
     return fn
 
-# --- ៥. STEP 1: TRANSCRIBE & AUTO-MERGE ---
+# --- ៥. STEP 1: TRANSCRIBE & 8-WORD LIMIT MERGE ---
 if st.session_state.current_step == 0:
-    st.markdown("<h2 class='gold-text'>🎙️ STEP 1: VIDEO TO SRT (AUTO-MERGE)</h2>", unsafe_allow_html=True)
+    st.markdown("<h2 class='gold-text'>🎙️ STEP 1: VIDEO TO SRT (8-WORD LIMIT)</h2>", unsafe_allow_html=True)
     f = st.file_uploader("Upload Video/Audio", type=["mp4", "mp3", "mov", "m4a"])
-    if st.button("🚀 START FAST TRANSCRIBE"):
+    if st.button("🚀 START SMART TRANSCRIBE"):
         if f:
             with open("temp_raw", "wb") as file: file.write(f.getbuffer())
-            with st.spinner("⚡ កំពុងបំប្លែង និងផ្គួបឃ្លាដែលនៅជិតគ្នា..."):
+            with st.spinner("⚡ កំពុងបំប្លែង និងរៀបចំឃ្លាខ្លីៗ (៨ម៉ាត់)..."):
                 model = load_whisper_engine()
                 res = model.transcribe("temp_raw", fp16=False)
                 
-                # Logic: ផ្គួបឃ្លាណាដែលនៅក្បែរគ្នា (Gap < 0.6s) ដើម្បីឱ្យ AI អានរលូន
                 segs = res['segments']
                 merged = []
                 if segs:
@@ -108,7 +107,11 @@ if st.session_state.current_step == 0:
                     for i in range(1, len(segs)):
                         nxt = segs[i]
                         gap = nxt['start'] - curr['end']
-                        if gap < 0.6: 
+                        # រាប់ចំនួនម៉ាត់ក្នុងឃ្លាបច្ចុប្បន្ន
+                        word_count = len(curr['text'].split())
+                        
+                        # បើចន្លោះពេលតូចជាង 0.5s និងចំនួនម៉ាត់មិនទាន់លើស 8 ម៉ាត់ គឺផ្គួបចូលគ្នា
+                        if gap < 0.5 and word_count < 8: 
                             curr['text'] += " " + nxt['text']
                             curr['end'] = nxt['end']
                         else:
@@ -124,13 +127,13 @@ if st.session_state.current_step == 0:
                 st.rerun()
 
     if st.session_state.generated_srt:
-        st.text_area("SRT Result (Merged)", st.session_state.generated_srt, height=250)
+        st.text_area("SRT Result", st.session_state.generated_srt, height=250)
         if st.button("បន្តទៅ Dubbing ➡️"):
             st.session_state.current_step = 1; st.rerun()
 
-# --- ៦. STEP 2: DUBBING (PERFECT SYNC LOGIC) ---
+# --- ៦. STEP 2: DUBBING (SYNCED) ---
 else:
-    st.markdown("<h2 class='gold-text'>🎬 STEP 2: AI GOLD DUBBING (SYNCED)</h2>", unsafe_allow_html=True)
+    st.markdown("<h2 class='gold-text'>🎬 STEP 2: AI GOLD DUBBING (8-WORD LIMIT)</h2>", unsafe_allow_html=True)
     if 'data' not in st.session_state:
         if st.button("📥 បកប្រែជាភាសាខ្មែរ"):
             subs = list(srt.parse(st.session_state.generated_srt))
@@ -146,32 +149,24 @@ else:
         
         spd_val = st.slider("ល្បឿននិយាយសរុប (%)", -50, 50, 0)
         
-        if st.button("🚀 ផលិតសម្លេង Dubbing (ត្រូវនាទី ១០០%)", type="primary"):
+        if st.button("🚀 ផលិតសម្លេង Dubbing", type="primary"):
             st.session_state.data = edit_df.to_dict('records')
             async def run_now():
                 return await asyncio.gather(*[fetch_tts(r, i, spd_val) for i, r in enumerate(st.session_state.data)])
             
-            with st.spinner("🎙️ កំពុង Sync សម្លេងឱ្យត្រូវ Timeline..."):
+            with st.spinner("🎙️ កំពុង Sync សម្លេង..."):
                 f_list = asyncio.run(run_now())
-                
-                # បង្កើត Timeline សរុប
-                total_dur = int(st.session_state.data[-1]['End'].total_seconds() * 1000) + 1500
+                total_dur = int(st.session_state.data[-1]['End'].total_seconds() * 1000) + 2000
                 final_audio = AudioSegment.silent(duration=total_dur, frame_rate=24000)
                 
                 for i, r in enumerate(st.session_state.data):
-                    s_ms = int(r['Start'].total_seconds() * 1000)
-                    e_ms = int(r['End'].total_seconds() * 1000)
+                    s_ms, e_ms = int(r['Start'].total_seconds() * 1000), int(r['End'].total_seconds() * 1000)
                     limit = e_ms - s_ms
-                    
                     if os.path.exists(f_list[i]):
                         seg = AudioSegment.from_file(f_list[i]).set_frame_rate(24000)
-                        
-                        # បើអានវែងជាងនាទីក្នុងរឿង ត្រូវបង្កើនល្បឿនអូតូ
                         if len(seg) > limit:
                             seg = speedup(seg, playback_speed=min(len(seg)/limit, 1.4), chunk_size=150, crossfade=25)
-                            seg = seg[:limit] # កាត់តម្រឹមឱ្យល្មមបេះបិទ
-                        
-                        # ដាក់សម្លេងឱ្យចំចំនុច Start ជានិច្ច (ទោះឃ្លាមុនវែងក៏មិនប៉ះពាល់)
+                            seg = seg[:limit]
                         final_audio = final_audio.overlay(seg, position=s_ms)
                         os.remove(f_list[i])
                 
@@ -182,6 +177,6 @@ else:
 
         if st.session_state.get('audio_bytes'):
             st.audio(st.session_state.audio_bytes)
-            st.download_button("📥 DOWNLOAD DUBBING", st.session_state.audio_bytes, "reach_maverick_synced.mp3")
+            st.download_button("📥 DOWNLOAD MP3", st.session_state.audio_bytes, "reach_maverick_8words.mp3")
 
     st.button("⬅️ BACK", on_click=lambda: setattr(st.session_state, 'current_step', 0))
