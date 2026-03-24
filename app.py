@@ -12,53 +12,33 @@ import asyncio, edge_tts, srt, os, re, pandas as pd, time
 from pydub import AudioSegment
 from pydub.effects import speedup
 from deep_translator import GoogleTranslator
-from streamlit_javascript import st_javascript
 
 # --- ១. កំណត់ Page Config ---
 st.set_page_config(page_title="Reach AI Pro", layout="wide")
 
-# --- ២. ប្រព័ន្ធ Login (ចងចាំ Password & Timeout 3mn) ---
+# --- ២. ប្រព័ន្ធ Login (ប្រើ Session State ធម្មតាដើម្បីកុំឱ្យគាំង) ---
 USER_NAME = "admin"
 USER_PASSWORD = "reachzano"
 
+if "logged_in" not in st.session_state:
+    st.session_state.logged_in = False
+if "current_step" not in st.session_state:
+    st.session_state.current_step = 0
+
 def login():
-    stored_user = st_javascript("localStorage.getItem('reach_user');")
-    stored_pw = st_javascript("localStorage.getItem('reach_pw');")
-    last_active = st_javascript("localStorage.getItem('last_active');")
-    current_time = int(time.time())
-    timeout_seconds = 180 
-
-    if "logged_in" not in st.session_state:
-        st.session_state.logged_in = False
-
-    if last_active and stored_user == USER_NAME:
-        elapsed = current_time - int(last_active)
-        if elapsed > timeout_seconds:
-            st.session_state.logged_in = False
-        else:
-            st.session_state.logged_in = True
-    
     if not st.session_state.logged_in:
         st.markdown("<h2 style='text-align: center;'>🔐 ចូលប្រើប្រាស់ Reach AI</h2>", unsafe_allow_html=True)
         col1, col2, col3 = st.columns([1, 1.5, 1])
         with col2:
-            user = st.text_input("Username", value=stored_user if stored_user else "")
-            pw = st.text_input("Password", type="password", value=stored_pw if stored_pw else "")
-            remember = st.checkbox("ចងចាំលេខសម្ងាត់ (Remember Me)")
+            user = st.text_input("Username")
+            pw = st.text_input("Password", type="password")
             if st.button("ចូលប្រើ", type="primary", use_container_width=True):
                 if user == USER_NAME and pw == USER_PASSWORD:
                     st.session_state.logged_in = True
-                    st.session_state.current_step = 0 # 0 = Transcribe, 1 = Dubbing
-                    st_javascript(f"localStorage.setItem('last_active', '{current_time}');")
-                    if remember:
-                        st_javascript(f"localStorage.setItem('reach_user', '{user}');")
-                        st_javascript(f"localStorage.setItem('reach_pw', '{pw}');")
                     st.rerun()
                 else:
                     st.error("ខុសឈ្មោះ ឬលេខសម្ងាត់!")
         st.stop()
-    else:
-        st_javascript(f"localStorage.setItem('last_active', '{current_time}');")
 
 login()
 
@@ -97,27 +77,24 @@ async def process_audio(data, base_speed, status, progress):
         if os.path.exists(tmp):
             seg = AudioSegment.from_file(tmp)
             if len(seg) > (end_ms - start_ms + 500):
-                seg = speedup(seg, playback_speed=min(len(seg)/(end_ms - start_ms), 1.4), chunk_size=150, crossfade=25)
+                seg = speedup(seg, playback_speed=min(len(seg)/(max(1, end_ms - start_ms)), 1.4), chunk_size=150, crossfade=25)
             combined += seg
             current_ms += len(seg)
             try: os.remove(tmp)
             except: pass
     return combined
 
-# --- ៤. Navigation Logic ---
-if 'current_step' not in st.session_state:
-    st.session_state.current_step = 0 # ចាប់ផ្តើមនៅ Step 1
+# --- ៤. Sidebar & Navigation ---
+st.sidebar.title(f"👤 {USER_NAME}")
+step_options = ["Step 1: Transcribe", "Step 2: Dubbing"]
+# បង្កើត Radio ឱ្យ Sync ជាមួយ current_step
+choice = st.sidebar.radio("ជំហានការងារ", step_options, index=st.session_state.current_step)
 
-# បង្កើត Sidebar Radio ដែល Sync ជាមួយ State
-step_options = ["បំប្លែងវីដេអូ (Transcribe)", "បញ្ចូលសម្លេង (Dubbing)"]
-selected_step = st.sidebar.radio("ជំហានការងារ", step_options, index=st.session_state.current_step)
-
-# បើអ្នកប្រើចុចប្តូរនៅ Sidebar ផ្ទាល់
-if selected_step == step_options[0]: st.session_state.current_step = 0
+# បើអ្នកប្រើចុចលើ Sidebar ផ្ទាល់ ឱ្យដូរ Step តាមនោះ
+if choice == step_options[0]: st.session_state.current_step = 0
 else: st.session_state.current_step = 1
 
 if st.sidebar.button("🚪 Logout"):
-    st_javascript("localStorage.removeItem('last_active');")
     st.session_state.logged_in = False
     st.rerun()
 
@@ -150,13 +127,12 @@ if st.session_state.current_step == 0:
     if st.session_state.generated_srt:
         st.text_area("លទ្ធផល SRT", st.session_state.generated_srt, height=250)
         st.divider()
-        c_left, c_right = st.columns([5, 1])
-        with c_left:
-            if st.button("🗑️ Reset Data"): 
+        col_l, col_r = st.columns([5, 1])
+        with col_l:
+            if st.button("🗑️ Reset Step 1"): 
                 st.session_state.generated_srt = ""
-                if 'data' in st.session_state: del st.session_state.data
                 st.rerun()
-        with c_right:
+        with col_r:
             if st.button("បន្តទៅមុខ ➡️", type="primary", use_container_width=True):
                 st.session_state.current_step = 1
                 st.rerun()
@@ -167,14 +143,13 @@ else:
     srt_input = st.session_state.get('generated_srt', "")
     
     if not srt_input:
-        st.warning("⚠️ សូមបំពេញ Step 1 ជាមុនសិន!")
-        if st.button("⬅️ ទៅកាន់ Step 1"):
+        st.warning("⚠️ មិនទាន់មានទិន្នន័យពី Step 1 ទេ!")
+        if st.button("⬅️ ត្រលប់ទៅ Step 1"):
             st.session_state.current_step = 0
             st.rerun()
     else:
-        # បើមាន SRT តែមិនទាន់បកប្រែ
         if 'data' not in st.session_state:
-            if st.button("📥 ចាប់ផ្ដើមបកប្រែអត្ថបទពី Step 1", type="primary"):
+            if st.button("📥 ចាប់ផ្ដើមបកប្រែ", type="primary"):
                 subs = list(srt.parse(srt_input))
                 tr_en, tr_km = GoogleTranslator(source='auto', target='en'), GoogleTranslator(source='en', target='km')
                 data = []
@@ -195,7 +170,6 @@ else:
                     column_config={"Select": st.column_config.CheckboxColumn("រើស", default=False), "English": st.column_config.TextColumn("EN", disabled=True), "Khmer_Text": st.column_config.TextColumn("KH", width="large"), "Voice": st.column_config.SelectboxColumn("ភេទ", options=["Male", "Female"]), "ID":None, "Start":None, "End":None})
                 
                 st.divider()
-                # ប៊ូតុងបញ្ជាលឿន
                 c1, c2, c3, c4 = st.columns(4)
                 with c1:
                     if st.button("🌸 ស្រីទាំងអស់"):
@@ -216,14 +190,16 @@ else:
                             if edited_df.loc[edited_df['ID'] == item['ID'], 'Select'].values[0]: item['Voice'] = "Male"
                         st.rerun()
                 
-                c_save, c_en, c_kh = st.columns(3)
-                with c_save:
+                # ប៊ូតុង Save និង Download
+                st.divider()
+                cs1, cs2, cs3 = st.columns(3)
+                with cs1:
                     if st.button("💾 រក្សាទុកការកែ", use_container_width=True):
                         st.session_state.data = edited_df.to_dict('records'); st.success("Saved!")
-                with c_en:
+                with cs2:
                     en_srt = create_srt_download(st.session_state.data, "English")
                     st.download_button("📥 Download EN SRT", en_srt.encode('utf-8-sig'), "en.srt", use_container_width=True)
-                with c_kh:
+                with cs3:
                     km_srt = create_srt_download(st.session_state.data, "Khmer_Text")
                     st.download_button("📥 Download KH SRT", km_srt.encode('utf-8-sig'), "kh.srt", use_container_width=True)
 
