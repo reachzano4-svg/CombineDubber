@@ -72,9 +72,14 @@ def check_api_status(key):
     try:
         genai.configure(api_key=key)
         model = genai.GenerativeModel('gemini-1.5-flash')
-        model.generate_content("Hi", generation_config={"max_output_tokens": 1})
-        return True
-    except:
+        # ប្តូរមកសាកសួរខ្លីបំផុត ដើម្បីកុំឱ្យអស់ Token
+        response = model.generate_content("test", generation_config={"max_output_tokens": 1})
+        if response:
+            return True
+        return False
+    except Exception as e:
+        # បង្ហាញ Error ពិតប្រាកដឱ្យបងឃើញតែម្តង
+        st.sidebar.error(f"Error Detail: {str(e)}")
         return False
 
 if api_key_input:
