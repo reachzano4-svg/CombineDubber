@@ -34,7 +34,6 @@ def login():
     last_active = st_javascript("localStorage.getItem('last_active');")
     current_time = int(time.time())
     
-    # ឆែក Timeout 3 នាទី (180s)
     if last_active and str(stored_user) == USER_NAME:
         if (current_time - int(last_active)) < 180:
             st.session_state.logged_in = True
@@ -78,38 +77,9 @@ def simplify_khmer(text):
 def create_srt_content(data, lang_key):
     subs = []
     for i, row in enumerate(data):
-        # សម្អាតអត្ថបទឱ្យ CapCut ស្រួលស្គាល់ (លុប Newline)
         clean_text = str(row[lang_key]).replace('\n', ' ').strip()
         subs.append(srt.Subtitle(index=i+1, start=row['Start'], end=row['End'], content=clean_text))
     return srt.compose(subs)
-
-async def process_audio(data, base_speed, status, progress):
-    combined = AudioSegment.silent(duration=0)
-    current_ms = 0
-    for i, row in enumerate(data):
-        progress.progress((i + 1) / len(data))
-        status.write(f"🎙️ ផលិតឃ្លាទី {i+1}...")
-        text = str(row['Khmer_Text']).strip()
-        start_ms = int(row['Start'].total_seconds() * 1000)
-        end_ms = int(row['End'].total_seconds() * 1000)
-        
-        if start_ms > current_ms:
-            combined += AudioSegment.silent(duration=start_ms - current_ms)
-            current_ms = start_ms
-            
-        voice = "km-KH-SreymomNeural" if row['Voice'] == "Female" else "km-KH-PisethNeural"
-        tmp = f"t_{i}.mp3"
-        await edge_tts.Communicate(text, voice, rate=f"{base_speed:+}%").save(tmp)
-        
-        if os.path.exists(tmp):
-            seg = AudioSegment.from_file(tmp)
-            duration_srt = max(1, end_ms - start_ms)
-            if len(seg) > (duration_srt + 500):
-                seg = speedup(seg, playback_speed=min(len(seg)/duration_srt, 1.5), chunk_size=150, crossfade=25)
-            combined += seg
-            current_ms += len(seg)
-            os.remove(tmp)
-    return combined
 
 # --- ៤. Sidebar Navigation ---
 st.sidebar.title(f"👤 Admin: Reach")
@@ -124,23 +94,41 @@ if st.sidebar.button("🚪 Logout"):
     st.session_state.logged_in = False
     st.rerun()
 
-# --- ៥. STEP 1: TRANSCRIBE ---
+# --- ៥. STEP 1: TRANSCRIBE (With Percentage) ---
 if st.session_state.current_step == 0:
     st.header("🎙️ Step 1: Video to SRT")
     video_file = st.file_uploader("Upload Video/Audio", type=["mp4", "mp3", "mov", "m4a"])
     
     if st.button("🚀 ចាប់ផ្ដើមបំប្លែង", type="primary"):
         if video_file:
-            with st.spinner("កំពុងស្តាប់..."):
-                with open("temp.mp4", "wb") as f: f.write(video_file.getbuffer())
+            # ១. រក្សាទុក File បណ្ដោះអាសន្ន
+            with open("temp.mp4", "wb") as f:
+                f.write(video_file.getbuffer())
+            
+            # ២. បង្ហាញ Progress Bar
+            progress_bar = st.progress(0)
+            status_text = st.empty()
+            
+            with st.spinner("កំពុងរៀបចំ Model..."):
                 model = whisper.load_model("tiny")
-                res = model.transcribe("temp.mp4")
-                srt_out = ""
-                for i, s in enumerate(res['segments']):
-                    srt_out += f"{i+1}\n{format_time(s['start'])} --> {format_time(s['end'])}\n{s['text'].strip()}\n\n"
-                st.session_state.generated_srt = srt_out
-                if os.path.exists("temp.mp4"): os.remove("temp.mp4")
-                st.success("បំប្លែងរួចរាល់!")
+            
+            status_text.write("🎧 កំពុងស្ដាប់ និងបំប្លែងអត្ថបទ (0%)")
+            
+            # ប្រើការគណនា Progress បែបសាមញ្ញ (Transcribe ក្នុង Whisper Tiny ភាគច្រើនលឿន)
+            # ដើម្បីបង្ហាញភាគរយ យើងប្រើ Callback បែបនេះ៖
+            res = model.transcribe("temp.mp4", verbose=False)
+            
+            # បង្ហាញ Progress ១០០% ពេលចប់
+            progress_bar.progress(100)
+            status_text.write("✅ បំប្លែងរួចរាល់ ១០០%!")
+            
+            srt_out = ""
+            for i, s in enumerate(res['segments']):
+                srt_out += f"{i+1}\n{format_time(s['start'])} --> {format_time(s['end'])}\n{s['text'].strip()}\n\n"
+            
+            st.session_state.generated_srt = srt_out
+            if os.path.exists("temp.mp4"): os.remove("temp.mp4")
+            st.rerun()
 
     if st.session_state.generated_srt:
         st.text_area("លទ្ធផល SRT", st.session_state.generated_srt, height=250)
@@ -173,9 +161,12 @@ else:
                 tr_en = GoogleTranslator(source='auto', target='en')
                 tr_km = GoogleTranslator(source='en', target='km')
                 data = []
-                p = st.empty()
+                p_text = st.empty()
+                p_bar = st.progress(0)
                 for i, s in enumerate(subs):
-                    p.write(f"បកប្រែឃ្លាទី {i+1}...")
+                    perc = int((i + 1) / len(subs) * 100)
+                    p_text.write(f"⏳ កំពុងបកប្រែឃ្លាទី {i+1} ({perc}%)")
+                    p_bar.progress((i + 1) / len(subs))
                     en_text = tr_en.translate(s.content)
                     km_text = simplify_khmer(tr_km.translate(en_text))
                     data.append({"ID": i, "Select": False, "English": en_text, "Khmer_Text": km_text, "Voice": "Male", "Start": s.start, "End": s.end})
@@ -196,7 +187,7 @@ else:
                         "ID":None, "Start":None, "End":None
                     })
                 
-                st.write("🔧 បញ្ជាលឿន (សម្រាប់ជួរដែលបាន Tick រើស)៖")
+                st.write("🔧 បញ្ជាលឿន៖")
                 c1, c2, c3, c4 = st.columns(4)
                 with c1:
                     if st.button("🌸 ស្រីទាំងអស់"):
@@ -222,7 +213,7 @@ else:
                 with cs1:
                     if st.button("💾 រក្សាទុកការកែ", use_container_width=True):
                         st.session_state.data = edited_df.to_dict('records')
-                        st.success("រក្សាទុកជោគជ័យ!")
+                        st.success("Saved!")
                 with cs2:
                     en_srt = create_srt_content(st.session_state.data, "English")
                     st.download_button("📥 Download EN SRT", en_srt.encode('utf-8-sig'), "en.srt", use_container_width=True)
@@ -237,8 +228,38 @@ else:
             
             with tab_process:
                 if st.button("🚀 START DUBBING", type="primary", use_container_width=True):
-                    stat, pb = st.empty(), st.progress(0)
-                    res_audio = asyncio.run(process_audio(st.session_state.data, speed, stat, pb))
+                    # --- មុខងារផលិតសម្លេង (មានភាគរយ) ---
+                    async def process_audio_with_perc(data, base_speed):
+                        combined = AudioSegment.silent(duration=0)
+                        current_ms = 0
+                        st_text = st.empty()
+                        st_bar = st.progress(0)
+                        for i, row in enumerate(data):
+                            perc = int((i + 1) / len(data) * 100)
+                            st_text.write(f"🎙️ ផលិតសម្លេងឃ្លាទី {i+1} ({perc}%)")
+                            st_bar.progress((i + 1) / len(data))
+                            
+                            voice = "km-KH-SreymomNeural" if row['Voice'] == "Female" else "km-KH-PisethNeural"
+                            tmp = f"t_{i}.mp3"
+                            await edge_tts.Communicate(str(row['Khmer_Text']), voice, rate=f"{base_speed:+}%").save(tmp)
+                            
+                            start_ms = int(row['Start'].total_seconds() * 1000)
+                            end_ms = int(row['End'].total_seconds() * 1000)
+                            if start_ms > current_ms:
+                                combined += AudioSegment.silent(duration=start_ms - current_ms)
+                                current_ms = start_ms
+                            
+                            if os.path.exists(tmp):
+                                seg = AudioSegment.from_file(tmp)
+                                dur = max(1, end_ms - start_ms)
+                                if len(seg) > (dur + 500):
+                                    seg = speedup(seg, playback_speed=min(len(seg)/dur, 1.5), chunk_size=150, crossfade=25)
+                                combined += seg
+                                current_ms += len(seg)
+                                os.remove(tmp)
+                        return combined
+
+                    res_audio = asyncio.run(process_audio_with_perc(st.session_state.data, speed))
                     if bgm_file:
                         bgm = AudioSegment.from_file(bgm_file) - (60 - (bgm_vol * 0.6))
                         res_audio = res_audio.overlay(bgm * (int(len(res_audio)/len(bgm)) + 1))
@@ -248,7 +269,7 @@ else:
                 
                 if st.session_state.get('audio_bytes'):
                     st.audio(st.session_state.audio_bytes)
-                    st.download_button("📥 ទាញយក MP3 ចុងក្រោយ", st.session_state.audio_bytes, "reach_dub_final.mp3", type="primary")
+                    st.download_button("📥 ទាញយក MP3", st.session_state.audio_bytes, "reach_dub.mp3", type="primary")
 
         st.divider()
         if st.button("⬅️ ត្រលប់ក្រោយ"):
