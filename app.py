@@ -19,10 +19,7 @@ st.set_page_config(page_title="Reach Maverick AI", layout="wide", page_icon="�
 
 st.markdown("""
     <style>
-    /* Background & Global Font */
     .stApp { background-color: #0E1117; }
-    
-    /* Gold Header Area */
     .gold-text {
         text-align: center;
         background: linear-gradient(90deg, #D4AF37, #F9E27E, #D4AF37);
@@ -32,38 +29,28 @@ st.markdown("""
         font-weight: 800;
         margin-bottom: 10px;
     }
-
-    /* Custom Buttons - Maverick Gold Style */
     .stButton>button {
         background: linear-gradient(145deg, #D4AF37, #B8860B) !important;
         color: black !important;
         border: none !important;
         border-radius: 12px !important;
         font-weight: bold !important;
-        height: 3em !important;
+        height: 3.5em !important;
         width: 100% !important;
         box-shadow: 0 4px 15px rgba(212, 175, 55, 0.2);
-        transition: 0.3s;
     }
-    .stButton>button:hover {
-        box-shadow: 0 6px 20px rgba(212, 175, 55, 0.4);
-        transform: translateY(-2px);
-    }
-
-    /* Input Styling */
-    .stTextInput>div>div>input { border-color: #D4AF37 !important; }
-    
-    /* Sidebar Styling */
     section[data-testid="stSidebar"] { background-color: #000000; border-right: 1px solid #D4AF37; }
+    div[data-testid="stExpander"] { border: 1px solid #D4AF37 !important; border-radius: 10px; }
     </style>
     """, unsafe_allow_html=True)
 
-# --- ២. Turbo Model Loading (Cache ទុកក្នុង RAM ឱ្យលឿន) ---
+# --- ២. Turbo Engine Loading (Cache) ---
 @st.cache_resource
 def load_whisper_engine():
-    return whisper.load_model("tiny") # Tiny គឺលឿនបំផុតសម្រាប់ Mobile & PC
+    # ប្រើ tiny model ដើម្បីល្បឿនលឿនបំផុតសម្រាប់ Audio វែងៗ
+    return whisper.load_model("tiny")
 
-# --- ៣. ប្រព័ន្ធ Login (រក្សាទុកដូចដើម) ---
+# --- ៣. ប្រព័ន្ធ Login ---
 USER_NAME = "admin"
 USER_PASSWORD = "reachzano"
 
@@ -71,32 +58,30 @@ if "logged_in" not in st.session_state: st.session_state.logged_in = False
 if "current_step" not in st.session_state: st.session_state.current_step = 0
 if "generated_srt" not in st.session_state: st.session_state.generated_srt = ""
 
-def login_maverick():
+def login_system():
     u_val = st_javascript("localStorage.getItem('reach_user');")
     p_val = st_javascript("localStorage.getItem('reach_pw');")
     act_val = st_javascript("localStorage.getItem('last_active');")
     now_t = int(time.time())
     
     if act_val and str(u_val) == USER_NAME:
-        if (now_t - int(act_val)) < 900: st.session_state.logged_in = True
+        if (now_t - int(act_val)) < 1200: st.session_state.logged_in = True
 
     if not st.session_state.logged_in:
         st.markdown("<h1 class='gold-text'>🎙️ REACH MAVERICK AI</h1>", unsafe_allow_html=True)
         with st.container(border=True):
-            _, mid, _ = st.columns([1, 2, 1])
-            with mid:
-                u = st.text_input("👤 Username", value=u_val if u_val else "")
-                p = st.text_input("🔑 Password", type="password", value=p_val if p_val else "")
-                if st.button("SIGN IN TO SYSTEM"):
-                    if u == USER_NAME and p == USER_PASSWORD:
-                        st.session_state.logged_in = True
-                        st_javascript(f"localStorage.setItem('last_active', '{now_t}');")
-                        st_javascript(f"localStorage.setItem('reach_user', '{u}');")
-                        st_javascript(f"localStorage.setItem('reach_pw', '{p}');")
-                        st.rerun()
-                    else: st.error("លេខសម្ងាត់ខុស!")
+            u = st.text_input("👤 Username", value=u_val if u_val else "")
+            p = st.text_input("🔑 Password", type="password", value=p_val if p_val else "")
+            if st.button("SIGN IN TO SYSTEM"):
+                if u == USER_NAME and p == USER_PASSWORD:
+                    st.session_state.logged_in = True
+                    st_javascript(f"localStorage.setItem('last_active', '{now_t}');")
+                    st_javascript(f"localStorage.setItem('reach_user', '{u}');")
+                    st_javascript(f"localStorage.setItem('reach_pw', '{p}');")
+                    st.rerun()
+                else: st.error("លេខសម្ងាត់មិនត្រឹមត្រូវ!")
         st.stop()
-login_maverick()
+login_system()
 
 # --- ៤. Helper Functions ---
 def format_time(seconds):
@@ -117,34 +102,46 @@ async def fetch_tts(row, idx, spd):
     await edge_tts.Communicate(str(row['Khmer_Text']), v, rate=f"{spd:+}%").save(fn)
     return fn
 
-# --- ៥. Sidebar Navigation ---
+# --- ៥. Sidebar ---
 with st.sidebar:
     st.markdown("<h2 style='color: #D4AF37;'>MAVERICK AI</h2>", unsafe_allow_html=True)
     st.info(f"👤 Admin: **Reach**")
-    mode = st.radio("Step Navigation:", ["🎙️ Transcribe (Turbo)", "🎬 Dubbing (Gold)"], index=st.session_state.current_step)
+    mode = st.radio("Step:", ["🎙️ Transcribe (Turbo)", "🎬 Dubbing (Gold)"], index=st.session_state.current_step)
     st.session_state.current_step = 0 if "Transcribe" in mode else 1
-    st.divider()
     if st.button("🚪 LOGOUT"):
         st_javascript("localStorage.removeItem('last_active');")
         st.session_state.logged_in = False
         st.rerun()
 
-# --- ៦. STEP 1: TRANSCRIBE (Ultra-Fast) ---
+# --- ៦. STEP 1: TRANSCRIBE (Ultra-Fast for 10mn+ Audio) ---
 if st.session_state.current_step == 0:
-    st.markdown("<h2 class='gold-text'>🎙️ STEP 1: VIDEO TO SRT</h2>", unsafe_allow_html=True)
+    st.markdown("<h2 class='gold-text'>🎙️ STEP 1: VIDEO TO SRT (TURBO)</h2>", unsafe_allow_html=True)
     with st.container(border=True):
-        f = st.file_uploader("Upload Video or Audio", type=["mp4", "mp3", "mov", "m4a"])
-        if st.button("🚀 START FAST TRANSCRIBE"):
+        f = st.file_uploader("Upload Video/Audio (Support 10mn+)", type=["mp4", "mp3", "mov", "m4a"])
+        if st.button("🚀 START SUPER FAST TRANSCRIBE"):
             if f:
-                with open("temp.mp4", "wb") as file: file.write(f.getbuffer())
-                with st.spinner("⚡ AI កំពុងស្ដាប់យ៉ាងលឿន..."):
+                with open("temp_raw", "wb") as file: file.write(f.getbuffer())
+                start_t = time.time()
+                with st.spinner("⚡ កំពុងរៀបចំសម្លេង និងបំប្លែងយ៉ាងលឿន..."):
+                    # ដកយកតែសម្លេងកម្រិតស្រាល ដើម្បីឱ្យ AI ស្ដាប់លឿនបំផុត
+                    audio = AudioSegment.from_file("temp_raw")
+                    audio = audio.set_frame_rate(16000).set_channels(1)
+                    audio.export("temp_low.wav", format="wav")
+                    
                     model = load_whisper_engine()
-                    res = model.transcribe("temp.mp4", fp16=False)
+                    # ប្រើ beam_size=1 ដើម្បីល្បឿនខ្លាំងបំផុត (ស័ក្តិសមសម្រាប់ Audio វែង)
+                    res = model.transcribe("temp_low.wav", fp16=False, beam_size=1)
+                
                 srt_txt = ""
                 for i, s in enumerate(res['segments']):
                     srt_txt += f"{i+1}\n{format_time(s['start'])} --> {format_time(s['end'])}\n{s['text'].strip()}\n\n"
+                
                 st.session_state.generated_srt = srt_txt
-                if os.path.exists("temp.mp4"): os.remove("temp.mp4")
+                # លុប File ចោលការពារពេញ Memory
+                for tmp in ["temp_raw", "temp_low.wav"]:
+                    if os.path.exists(tmp): os.remove(tmp)
+                
+                st.success(f"✅ រួចរាល់! ចំណាយពេល: {round(time.time() - start_t, 1)} វិនាទី")
                 st.rerun()
 
     if st.session_state.generated_srt:
