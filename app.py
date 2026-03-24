@@ -32,55 +32,30 @@ api_key_input = st.sidebar.text_input(
 def check_api_status(key):
     if not key: return False
     try:
+        # បង្ខំឱ្យប្រើ API Key ថ្មី
         genai.configure(api_key=key)
-        # ប្រើ model_name ពេញលេញដើម្បីការពារ Error 404
-        model = genai.GenerativeModel(model_name='gemini-1.5-flash')
-        model.generate_content("test", generation_config={"max_output_tokens": 1})
+        # ប្រើឈ្មោះម៉ូដែលខ្លី 'gemini-1.5-flash' 
+        # ប្រសិនបើនៅតែ 404 បងសាកដូរទៅ 'gemini-pro' ដើម្បីតេស្តសិនក៏បាន
+        model = genai.GenerativeModel('gemini-1.5-flash')
+        
+        # សាកល្បងហៅដោយមិនបញ្ជាក់ Version ច្រើនពេក
+        response = model.generate_content("test", generation_config={"max_output_tokens": 1})
         return True
     except Exception as e:
+        # បង្ហាញ Error ឱ្យចំថាបញ្ហាអី
         st.sidebar.error(f"Error: {str(e)}")
         return False
 
-if api_key_input:
-    st_javascript(f"localStorage.setItem('gemini_api_key', '{api_key_input}');")
-    if st.sidebar.button("🔍 Check API Status"):
-        if check_api_status(api_key_input):
-            st.sidebar.success("✅ API Active")
-            st.session_state.api_ready = True
-        else:
-            st.sidebar.error("❌ API Invalid/Expired")
-            st.session_state.api_ready = False
-    else:
-        genai.configure(api_key=api_key_input)
-        st.session_state.api_ready = True
-else:
-    st.sidebar.warning("⚠️ សូមបំពេញ API Key")
-    st.session_state.api_ready = False
-
-# --- ៣. Helper Functions ---
-def format_time(seconds):
-    td = datetime.timedelta(seconds=seconds)
-    ts = int(td.total_seconds())
-    ms = int((td.total_seconds() - ts) * 1000)
-    return f"{ts // 3600:02}:{(ts % 3600) // 60:02}:{ts % 60:02},{ms:03}"
-
 def gemini_refine_srt(raw_srt):
     if not st.session_state.get('api_ready'):
-        st.error("❌ API មិនទាន់ Ready!")
         return raw_srt
     
-    prompt = f"""
-    Role: Professional Video Dubber.
-    Task: Refine SRT into natural, short Khmer-friendly dialogue (7-10 words per segment).
-    Rules: 
-    1. DO NOT CHANGE TIMECODES. 
-    2. Fix spelling and remove stuttering. 
-    3. Split long sentences if needed.
-    SRT:
-    {raw_srt}
-    """
+    # ប្រើ Prompt ឱ្យសាមញ្ញបំផុតសម្រាប់ Test
+    prompt = f"Please clean up this SRT text for better flow in Khmer dubbing, keep timecodes: {raw_srt}"
+    
     try:
-        model = genai.GenerativeModel(model_name='gemini-1.5-flash')
+        # បង្កើត Model Object ថ្មីរាល់ពេលហៅ
+        model = genai.GenerativeModel('gemini-1.5-flash')
         response = model.generate_content(prompt)
         return response.text.strip()
     except Exception as e:
