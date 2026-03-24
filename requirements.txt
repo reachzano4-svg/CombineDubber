@@ -6,4 +6,4 @@ pandas
 pydub
 deep_translator
 audioop-lts
-
+streamlit-javascript
