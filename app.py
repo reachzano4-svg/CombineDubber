@@ -120,13 +120,15 @@ def gemini_refine_srt(raw_srt):
         # ប្រើ model_name បែបនេះដើម្បីឱ្យវាស្គាល់ច្បាស់
         model = genai.GenerativeModel(model_name='gemini-1.5-flash')
         
+        # បន្ថែមការកំណត់ Safety ដើម្បីកុំឱ្យវាបដិសេធអត្ថបទរឿងរបស់បង
         response = model.generate_content(
             prompt,
-            # បន្ថែម safety_settings ដើម្បីកុំឱ្យវាបដិសេធអត្ថបទរឿង
-            safety_settings=[
-                {"category": "HARM_CATEGORY_HARASSMENT", "threshold": "BLOCK_NONE"},
-                {"category": "HARM_CATEGORY_HATE_SPEECH", "threshold": "BLOCK_NONE"},
-            ]
+            safety_settings={
+                "HARM_CATEGORY_HARASSMENT": "BLOCK_NONE",
+                "HARM_CATEGORY_HATE_SPEECH": "BLOCK_NONE",
+                "HARM_CATEGORY_SEXUALLY_EXPLICIT": "BLOCK_NONE",
+                "HARM_CATEGORY_DANGEROUS_CONTENT": "BLOCK_NONE",
+            }
         )
         return response.text.strip()
     except Exception as e:
