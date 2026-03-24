@@ -1,5 +1,4 @@
 try:
-    try:
     import audioop
 except ImportError:
     try:
