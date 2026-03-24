@@ -1,5 +1,5 @@
 import os
-import sys  # <--- បន្ថែម sys ត្រង់នេះបង Reach
+import sys
 import time
 import datetime
 import asyncio
@@ -13,7 +13,7 @@ from pydub import AudioSegment
 from pydub.effects import speedup
 from streamlit_javascript import st_javascript
 
-# --- ដោះស្រាយបញ្ហា Audioop ឱ្យមានស្ថេរភាព ---
+# --- បង្ខំឱ្យស្គាល់ Audioop លើរាល់ Python Version ---
 try:
     import audioop
 except ImportError:
