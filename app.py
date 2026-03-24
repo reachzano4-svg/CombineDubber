@@ -17,31 +17,30 @@ from streamlit_javascript import st_javascript
 # --- ១. កំណត់ Page Config ---
 st.set_page_config(page_title="Reach AI Pro", layout="wide")
 
-# --- ២. ប្រព័ន្ធ Login (ចងចាំ Password & Timeout 3mn) ---
+# --- ២. ប្រព័ន្ធ Login & Session State ---
 USER_NAME = "admin"
 USER_PASSWORD = "reachzano"
 
+if "logged_in" not in st.session_state:
+    st.session_state.logged_in = False
+if "current_step" not in st.session_state:
+    st.session_state.current_step = 0
+if "generated_srt" not in st.session_state:
+    st.session_state.generated_srt = ""
+
 def login():
-    # ព្យាយាមទាញយកទិន្នន័យពី Browser Storage
     stored_user = st_javascript("localStorage.getItem('reach_user');")
     stored_pw = st_javascript("localStorage.getItem('reach_pw');")
     last_active = st_javascript("localStorage.getItem('last_active');")
     current_time = int(time.time())
     
-    if "logged_in" not in st.session_state:
-        st.session_state.logged_in = False
-    if "current_step" not in st.session_state:
-        st.session_state.current_step = 0
-
-    # ឆែក Timeout 3 នាទី (180 វិនាទី)
+    # ឆែក Timeout 3 នាទី (180s)
     if last_active and str(stored_user) == USER_NAME:
-        if (current_time - int(last_active)) > 180:
-            st.session_state.logged_in = False
-        else:
+        if (current_time - int(last_active)) < 180:
             st.session_state.logged_in = True
-    
+
     if not st.session_state.logged_in:
-        st.markdown("<h2 style='text-align: center;'>🔐 Login Reach AI</h2>", unsafe_allow_html=True)
+        st.markdown("<h2 style='text-align: center;'>🔐 Reach AI Login</h2>", unsafe_allow_html=True)
         _, col2, _ = st.columns([1, 1.5, 1])
         with col2:
             user = st.text_input("Username", value=stored_user if stored_user else "")
@@ -59,7 +58,6 @@ def login():
                     st.error("ខុសលេខសម្ងាត់!")
         st.stop()
     else:
-        # Update ពេលវេលា Active រហូត
         st_javascript(f"localStorage.setItem('last_active', '{current_time}');")
 
 login()
@@ -73,9 +71,17 @@ def format_time(seconds):
 
 def simplify_khmer(text):
     if not text: return ""
-    replaces = {"តើ(.*)មែនទេ": r"\1មែនអត់?", "របស់អ្នក": "ឯង", "បាទ": "បាទបង", "ចាស": "ចា៎", "ខ្ញុំ": "ខ្ញុំ"}
+    replaces = {"តើ(.*)មែនទេ": r"\1មែនអត់?", "របស់អ្នក": "ឯង", "បាទ": "បាទបង", "ចាស": "ចា៎", "អរគុណ": "អរគុណបង"}
     for p, r in replaces.items(): text = re.sub(p, r, text)
     return text.strip()
+
+def create_srt_content(data, lang_key):
+    subs = []
+    for i, row in enumerate(data):
+        # សម្អាតអត្ថបទឱ្យ CapCut ស្រួលស្គាល់ (លុប Newline)
+        clean_text = str(row[lang_key]).replace('\n', ' ').strip()
+        subs.append(srt.Subtitle(index=i+1, start=row['Start'], end=row['End'], content=clean_text))
+    return srt.compose(subs)
 
 async def process_audio(data, base_speed, status, progress):
     combined = AudioSegment.silent(duration=0)
@@ -92,24 +98,25 @@ async def process_audio(data, base_speed, status, progress):
             current_ms = start_ms
             
         voice = "km-KH-SreymomNeural" if row['Voice'] == "Female" else "km-KH-PisethNeural"
-        tmp = f"temp_{i}.mp3"
+        tmp = f"t_{i}.mp3"
         await edge_tts.Communicate(text, voice, rate=f"{base_speed:+}%").save(tmp)
         
         if os.path.exists(tmp):
             seg = AudioSegment.from_file(tmp)
-            duration_srt = end_ms - start_ms
+            duration_srt = max(1, end_ms - start_ms)
             if len(seg) > (duration_srt + 500):
-                seg = speedup(seg, playback_speed=min(len(seg)/duration_srt, 1.4), chunk_size=150, crossfade=25)
+                seg = speedup(seg, playback_speed=min(len(seg)/duration_srt, 1.5), chunk_size=150, crossfade=25)
             combined += seg
             current_ms += len(seg)
             os.remove(tmp)
     return combined
 
-# --- ៤. Navigation Logic ---
-step_options = ["Step 1: Transcribe", "Step 2: Dubbing"]
-choice = st.sidebar.radio("ជំហានការងារ", step_options, index=st.session_state.current_step)
+# --- ៤. Sidebar Navigation ---
+st.sidebar.title(f"👤 Admin: Reach")
+step_list = ["Step 1: Transcribe", "Step 2: Dubbing"]
+choice = st.sidebar.radio("ជំហានការងារ", step_list, index=st.session_state.current_step)
 
-if choice == step_options[0]: st.session_state.current_step = 0
+if choice == step_list[0]: st.session_state.current_step = 0
 else: st.session_state.current_step = 1
 
 if st.sidebar.button("🚪 Logout"):
@@ -119,12 +126,12 @@ if st.sidebar.button("🚪 Logout"):
 
 # --- ៥. STEP 1: TRANSCRIBE ---
 if st.session_state.current_step == 0:
-    st.title("🎙️ Step 1: Video to SRT")
+    st.header("🎙️ Step 1: Video to SRT")
     video_file = st.file_uploader("Upload Video/Audio", type=["mp4", "mp3", "mov", "m4a"])
     
     if st.button("🚀 ចាប់ផ្ដើមបំប្លែង", type="primary"):
         if video_file:
-            with st.spinner("កំពុងស្តាប់ (ប្រើ Model Tiny ដើម្បីល្បឿន)..."):
+            with st.spinner("កំពុងស្តាប់..."):
                 with open("temp.mp4", "wb") as f: f.write(video_file.getbuffer())
                 model = whisper.load_model("tiny")
                 res = model.transcribe("temp.mp4")
@@ -135,27 +142,27 @@ if st.session_state.current_step == 0:
                 if os.path.exists("temp.mp4"): os.remove("temp.mp4")
                 st.success("បំប្លែងរួចរាល់!")
 
-    if st.session_state.get('generated_srt'):
+    if st.session_state.generated_srt:
         st.text_area("លទ្ធផល SRT", st.session_state.generated_srt, height=250)
         st.divider()
-        col_reset, col_next = st.columns([5, 1])
-        with col_reset:
+        c_reset, c_next = st.columns([5, 1])
+        with c_reset:
             if st.button("🗑️ Reset Data"): 
                 st.session_state.generated_srt = ""
                 if 'data' in st.session_state: del st.session_state.data
                 st.rerun()
-        with col_next:
+        with c_next:
             if st.button("បន្តទៅមុខ ➡️", type="primary", use_container_width=True):
                 st.session_state.current_step = 1
                 st.rerun()
 
 # --- ៦. STEP 2: DUBBING ---
 else:
-    st.title("🎬 Step 2: AI Dubbing & Voice")
-    srt_input = st.session_state.get('generated_srt', "")
+    st.header("🎬 Step 2: AI Dubbing & Voice")
+    srt_input = st.session_state.generated_srt
     
     if not srt_input:
-        st.warning("⚠️ សូមធ្វើ Step 1 សិន!")
+        st.warning("⚠️ សូមបំពេញ Step 1 ជាមុនសិន!")
         if st.button("⬅️ ទៅកាន់ Step 1"):
             st.session_state.current_step = 0
             st.rerun()
@@ -169,9 +176,9 @@ else:
                 p = st.empty()
                 for i, s in enumerate(subs):
                     p.write(f"បកប្រែឃ្លាទី {i+1}...")
-                    en = tr_en.translate(s.content)
-                    km = simplify_khmer(tr_km.translate(en))
-                    data.append({"ID": i, "Select": False, "English": en, "Khmer_Text": km, "Voice": "Male", "Start": s.start, "End": s.end})
+                    en_text = tr_en.translate(s.content)
+                    km_text = simplify_khmer(tr_km.translate(en_text))
+                    data.append({"ID": i, "Select": False, "English": en_text, "Khmer_Text": km_text, "Voice": "Male", "Start": s.start, "End": s.end})
                 st.session_state.data = data
                 st.rerun()
 
@@ -185,9 +192,11 @@ else:
                         "Select": st.column_config.CheckboxColumn("រើស", default=False),
                         "Khmer_Text": st.column_config.TextColumn("អត្ថបទខ្មែរ", width="large"),
                         "Voice": st.column_config.SelectboxColumn("ភេទ", options=["Male", "Female"]),
-                        "ID":None, "Start":None, "End":None, "English": None
+                        "English": st.column_config.TextColumn("អង់គ្លេស", disabled=True),
+                        "ID":None, "Start":None, "End":None
                     })
                 
+                st.write("🔧 បញ្ជាលឿន (សម្រាប់ជួរដែលបាន Tick រើស)៖")
                 c1, c2, c3, c4 = st.columns(4)
                 with c1:
                     if st.button("🌸 ស្រីទាំងអស់"):
@@ -208,17 +217,26 @@ else:
                             if edited_df.loc[edited_df['ID'] == item['ID'], 'Select'].values[0]: item['Voice'] = "Male"
                         st.rerun()
                 
-                if st.button("💾 រក្សាទុកការកែសម្រួល", use_container_width=True):
-                    st.session_state.data = edited_df.to_dict('records')
-                    st.success("Saved!")
+                st.divider()
+                cs1, cs2, cs3 = st.columns(3)
+                with cs1:
+                    if st.button("💾 រក្សាទុកការកែ", use_container_width=True):
+                        st.session_state.data = edited_df.to_dict('records')
+                        st.success("រក្សាទុកជោគជ័យ!")
+                with cs2:
+                    en_srt = create_srt_content(st.session_state.data, "English")
+                    st.download_button("📥 Download EN SRT", en_srt.encode('utf-8-sig'), "en.srt", use_container_width=True)
+                with cs3:
+                    km_srt = create_srt_content(st.session_state.data, "Khmer_Text")
+                    st.download_button("📥 Download KH SRT", km_srt.encode('utf-8-sig'), "kh.srt", use_container_width=True)
 
             with tab_setting:
                 speed = st.slider("ល្បឿននិយាយ (%)", -50, 50, 0)
-                bgm_file = st.file_uploader("ថែមភ្លេង BGM", type=["mp3"])
+                bgm_file = st.file_uploader("ភ្លេង BGM", type=["mp3"])
                 bgm_vol = st.slider("កម្រិតសម្លេង BGM", 0, 100, 20)
             
             with tab_process:
-                if st.button("🚀 START DUBBING", type="primary"):
+                if st.button("🚀 START DUBBING", type="primary", use_container_width=True):
                     stat, pb = st.empty(), st.progress(0)
                     res_audio = asyncio.run(process_audio(st.session_state.data, speed, stat, pb))
                     if bgm_file:
@@ -230,7 +248,7 @@ else:
                 
                 if st.session_state.get('audio_bytes'):
                     st.audio(st.session_state.audio_bytes)
-                    st.download_button("📥 ទាញយក MP3", st.session_state.audio_bytes, "reach_ai_dub.mp3")
+                    st.download_button("📥 ទាញយក MP3 ចុងក្រោយ", st.session_state.audio_bytes, "reach_dub_final.mp3", type="primary")
 
         st.divider()
         if st.button("⬅️ ត្រលប់ក្រោយ"):
