@@ -1,4 +1,9 @@
 try:
+    def format_time(seconds):
+    td = datetime.timedelta(seconds=seconds)
+    total_sec = int(td.total_seconds())
+    milis = int((td.total_seconds() - total_sec) * 1000)
+    return f"{total_sec // 3600:02}:{(total_sec % 3600) // 60:02}:{total_sec % 60:02},{milis:03}"
     import audioop
 except ImportError:
     try:
